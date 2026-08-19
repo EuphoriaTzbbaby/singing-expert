@@ -71,9 +71,13 @@ async function load() {
 async function onView(f) {
   actionId.value = f.id
   try {
-    const url = await getViewUrl(f.id)
+    // 走同源后端代理 /api/files/{id}/view
+    //  —— 后端流式转发 OSS 的 PDF，并强制返回 Content-Disposition: inline。
+    //  原因：当前 cwwdka 这个 OSS bucket 开了「默认强制下载 attachment」+
+    //       禁用了 response-content-type override，直接用 OSS 签名 URL
+    //       的话 iframe 会被浏览器当成下载而不是内嵌渲染 PDF 阅读器。
     viewerName.value = f.original_name
-    viewerUrl.value = url
+    viewerUrl.value = `/api/files/${f.id}/view`
   } finally {
     actionId.value = null
   }

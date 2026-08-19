@@ -53,16 +53,49 @@ def delete_from_oss(oss_key: str) -> None:
     _get_bucket().delete_object(oss_key)
 
 
+def get_object_stream(oss_key: str):
+    """
+    从 OSS 下载对象并返回一个「(总字节数, 按 chunk 迭代 body)」二元组，
+    用于后端代理流式返回给前端（绕开 OSS bucket 级的 force-download / response
+    header override 策略）。
+    """
+    bucket = _get_bucket()
+    result = bucket.get_object(oss_key)
+    content_length = int(result.headers.get("Content-Length", 0))
+
+    def _iter(chunk_size: int = 64 * 1024):
+        with result as r:
+            while True:
+                buf = r.read(chunk_size)
+                if not buf:
+                    break
+                yield buf
+
+    return content_length, _iter()
+
+
 def gen_view_url(oss_key: str, expires: int = 3600) -> str:
-    """生成在线查看用的签名 URL（inline 显示，浏览器内嵌渲染）"""
-    return _get_bucket().sign_url("GET", oss_key, expires)
+    """生成在线查看用的签名 URL。
+    显式加上 response-content-disposition=inline 覆盖桶级的「默认强制下载」配置，
+    否则浏览器/OSS 会返回 attachment，iframe 里不会内嵌 PDF 阅读器而是直接下载。
+
+    注意：cwwdka 这个 bucket 不允许在签名 URL 里 override response-content-type
+    （会报 OSS InvalidRequest: Can not override response header on content-type），
+    所以这里只传 disposition；Content-Type 由对象本身的元数据保证（上传时已设为
+    application/pdf）。
+    """
+    params = {
+        "response-content-disposition": "inline",
+    }
+    return _get_bucket().sign_url("GET", oss_key, expires, params=params)
 
 
 def gen_download_url(oss_key: str, filename: str, expires: int = 3600) -> str:
-    """生成下载用的签名 URL（强制 attachment，并用 RFC 5987 编码中文文件名）"""
+    """生成下载用的签名 URL（强制 attachment，并用 RFC 5987 编码中文文件名）。
+    同上，不传 response-content-type，避免 bucket 拒绝 override。
+    """
     encoded = quote(filename)
     params = {
         "response-content-disposition": f"attachment; filename*=UTF-8''{encoded}",
-        "response-content-type": "application/pdf",
     }
     return _get_bucket().sign_url("GET", oss_key, expires, params=params)

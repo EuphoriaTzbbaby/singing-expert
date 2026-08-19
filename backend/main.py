@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
@@ -9,7 +11,13 @@ from config import settings
 from database import Base, engine, get_db
 from models import PdfFile
 from schemas import HealthOut, PdfFileOut, SignedUrlOut
-from storage import gen_download_url, gen_oss_key, gen_view_url, upload_bytes_to_oss
+from storage import (
+    gen_download_url,
+    gen_oss_key,
+    gen_view_url,
+    get_object_stream,
+    upload_bytes_to_oss,
+)
 
 
 @asynccontextmanager
@@ -106,11 +114,47 @@ def list_pdfs(db: Session = Depends(get_db)):
 
 @app.get("/api/files/{file_id}/view-url", response_model=SignedUrlOut)
 def get_view_url(file_id: int, db: Session = Depends(get_db)):
-    """获取在线查看的 OSS 签名 URL（前端用 iframe 加载）"""
+    """获取在线查看的 OSS 签名 URL（保留兼容，但 iframe 推荐走 /view 同源代理）"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="文件不存在")
     return {"url": gen_view_url(record.oss_key)}
+
+
+@app.get("/api/files/{file_id}/view")
+def stream_pdf_view(
+    file_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    在线查看：后端把 OSS 的 PDF 字节流代理回来，**同源**返回给前端 iframe。
+    这么做主要是绕开当前 OSS bucket cwwdka 的两条限制：
+      1) bucket 开启了「默认强制下载」= Content-Disposition: attachment
+      2) bucket 不允许通过签名 URL 的 response-content-type 参数覆盖
+         （InvalidRequest: Can not override response header on content-type）
+    流式读取不会把整份文件加载进内存，100MB PDF 也能稳定处理。
+    """
+    record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    try:
+        total_bytes, body_iter = get_object_stream(record.oss_key)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"从 OSS 拉取文件失败: {e}")
+
+    disposition = f"inline; filename*=UTF-8''{quote(record.original_name)}"
+    headers = {
+        "Content-Disposition": disposition,
+        # 显式 no-store 也行；但 Content-Length 给浏览器能更友好显示
+    }
+    return StreamingResponse(
+        body_iter,
+        media_type="application/pdf",
+        status_code=200,
+        headers=headers,
+    )
 
 
 @app.get("/api/files/{file_id}/download-url", response_model=SignedUrlOut)
