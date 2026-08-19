@@ -30,4 +30,9 @@ export function getDownloadUrl(id) {
   return api.get(`/files/${id}/download-url`).then((r) => r.data.url)
 }
 
+// 删除 PDF（后端会同时删 OSS 对象 + MySQL 记录）
+export function deletePdf(id) {
+  return api.delete(`/files/${id}`).then((r) => r.data)
+}
+
 export default api

@@ -31,6 +31,13 @@
           >
             下载
           </button>
+          <button
+            class="btn-delete"
+            :disabled="actionId === f.id"
+            @click="onDelete(f)"
+          >
+            {{ actionId === f.id ? '删除中…' : '删除' }}
+          </button>
         </div>
       </li>
     </ul>
@@ -50,7 +57,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { getDownloadUrl, getViewUrl, listPdfs } from '../api'
+import { deletePdf, getDownloadUrl, getViewUrl, listPdfs } from '../api'
 
 const files = ref([])
 const loading = ref(false)
@@ -93,6 +100,28 @@ async function onDownload(f) {
     document.body.appendChild(a)
     a.click()
     a.remove()
+  } finally {
+    actionId.value = null
+  }
+}
+
+async function onDelete(f) {
+  const ok = window.confirm(
+    `确定删除「${f.original_name}」吗？\n\n` +
+      `文件大小：${formatSize(f.file_size)}\n` +
+      `上传时间：${formatDate(f.created_at)}\n\n` +
+      `这个操作会同时删除阿里云 OSS 里的文件对象 + 数据库记录，\n` +
+      `**删除后无法恢复**，请确认。`
+  )
+  if (!ok) return
+  actionId.value = f.id
+  try {
+    await deletePdf(f.id)
+    // 删除成功后直接刷新列表
+    await load()
+  } catch (e) {
+    const msg = e?.response?.data?.detail || e?.message || '删除失败'
+    window.alert(`删除失败：${msg}`)
   } finally {
     actionId.value = null
   }
@@ -193,7 +222,8 @@ defineExpose({ load })
   flex-shrink: 0;
 }
 .btn-view,
-.btn-download {
+.btn-download,
+.btn-delete {
   color: #fff;
   border: none;
   padding: 6px 14px;
@@ -207,11 +237,17 @@ defineExpose({ load })
 .btn-download {
   background: #6b7280;
 }
+.btn-delete {
+  background: #dc2626;
+}
 .btn-view:hover:not(:disabled) {
   background: #1d4ed8;
 }
 .btn-download:hover:not(:disabled) {
   background: #4b5563;
+}
+.btn-delete:hover:not(:disabled) {
+  background: #b91c1c;
 }
 button:disabled {
   opacity: 0.5;

@@ -12,6 +12,7 @@ from database import Base, engine, get_db
 from models import PdfFile
 from schemas import HealthOut, PdfFileOut, SignedUrlOut
 from storage import (
+    delete_from_oss,
     gen_download_url,
     gen_oss_key,
     gen_view_url,
@@ -164,6 +165,49 @@ def get_download_url_route(file_id: int, db: Session = Depends(get_db)):
     if not record:
         raise HTTPException(status_code=404, detail="文件不存在")
     return {"url": gen_download_url(record.oss_key, record.original_name)}
+
+
+@app.delete("/api/files/{file_id}")
+def delete_pdf(file_id: int, db: Session = Depends(get_db)):
+    """
+    删除一条 PDF 记录 = 先删 OSS 对象 + 再删 MySQL 行。
+    顺序（关键）：先查 DB 拿到 oss_key -> 删 OSS（幂等，不存在也不报错） -> 删 DB 行。
+    如果反过来先删 DB，万一 OSS 删除失败就再也找不到 oss_key，对象永久成孤儿。
+    """
+    record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    oss_key = record.oss_key
+    original_name = record.original_name
+
+    # Step 1: 删 OSS（幂等，哪怕对象之前就不存在也当成功）
+    try:
+        delete_from_oss(oss_key)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502,
+            detail=f"OSS 对象删除失败: {e}",
+        )
+
+    # Step 2: 删 MySQL 行（事务里，这一步失败前面 OSS 可能已经删了；
+    #         但因为对象已经不存在也不影响，最多留一条无效记录可以再点一次删除）
+    try:
+        db.delete(record)
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"数据库记录删除失败: {e}",
+        )
+
+    return {
+        "ok": True,
+        "id": file_id,
+        "original_name": original_name,
+        "deleted_oss_key": oss_key,
+    }
 
 
 if __name__ == "__main__":
