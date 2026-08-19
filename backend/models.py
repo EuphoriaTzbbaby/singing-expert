@@ -1,8 +1,21 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import BigInteger, Column, DateTime, Index, Integer, String
 
 from database import Base
+
+# 北京时间时区 = UTC + 8 小时
+CST = timezone(timedelta(hours=8))
+
+
+def _now_cst() -> datetime:
+    """返回「带 +08:00 时区信息」的当前北京时间。
+
+    MySQL 的 DATETIME 列本身不带时区，存的时候会把 wall-clock（墙钟）部分写入；
+    但 Pydantic 读出来时会感知这个 tzinfo，响应 JSON 自动序列化成
+    '2026-08-19T21:04:17+08:00' —— 前端 JS 就不会把它误解成本地 13:04 了。
+    """
+    return datetime.now(tz=CST)
 
 
 class AppConfig(Base):
@@ -32,7 +45,8 @@ class PdfFile(Base):
     oss_key = Column(String(512), nullable=False, comment="OSS 中的对象 key，如 pdfs/2026/08/xxx.pdf")
     file_size = Column(BigInteger, nullable=False, comment="文件大小（字节）")
     mime_type = Column(String(100), default="application/pdf", nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # ↓ 关键修复：从 datetime.utcnow 改为 now_cst（北京时间，含时区信息）
+    created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
 
     __table_args__ = (
         Index("idx_pdf_created_at", "created_at"),
