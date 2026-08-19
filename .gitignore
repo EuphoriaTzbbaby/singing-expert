@@ -1,0 +1,57 @@
+# ===== 通用 =====
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local
+.idea/
+.vscode/
+*.swp
+
+# ===== Python 后端 =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv/
+
+# 数据库与上传文件（不提交用户数据）
+*.db
+*.sqlite
+*.sqlite3
+backend/uploads/
+backend/data/
+
+# ===== 前端 =====
+node_modules/
+frontend/dist/
+frontend/node_modules/
+.npm
+.pnpm-store/
+
+# ===== 测试与缓存 =====
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/

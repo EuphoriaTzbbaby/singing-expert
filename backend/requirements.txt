@@ -1,0 +1,15 @@
+# FastAPI / 通用（不锁版本，让 pip 选有 Python 3.14 wheel 的最新版）
+fastapi>=0.118
+uvicorn[standard]>=0.32
+python-multipart>=0.0.12
+pydantic>=2.11
+pydantic-settings>=2.11
+python-dotenv>=1.0.1
+
+# 数据库
+sqlalchemy>=2.0.36
+pymysql>=1.1.1
+cryptography>=43.0.0
+
+# 阿里云 OSS（纯 Python sdist，无需 Rust 即可装）
+oss2>=2.18.4
