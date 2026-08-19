@@ -1,0 +1,80 @@
+name: Deploy Singing Expert to Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22
+
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Rename dist to frontend-dist
+        run: mv frontend/dist frontend-dist
+
+      - name: Copy frontend to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 47.101.42.177
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "frontend-dist/*"
+          target: "/var/www/html/springbootAndVue/singing-expert-dist"
+          strip_components: 1
+
+      - name: Sync backend code to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 47.101.42.177
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "backend/*.py"
+          target: "/var/www/html/springbootAndVue/singing-expert/backend"
+          strip_components: 1
+
+      - name: Restart backend service & reload nginx
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: 47.101.42.177
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # 拉最新代码（requirements.txt 也会跟着更新）
+            cd /var/www/html/springbootAndVue/singing-expert
+            git fetch --all
+            git reset --hard origin/main
+
+            # 装依赖（仅在 requirements.txt 变化时生效）
+            source venv/bin/activate
+            pip install -r backend/requirements.txt
+
+            # 重启后端 systemd 服务
+            systemctl restart singing-expert
+
+            # 把前端 dist 软链（或拷贝）到 nginx 静态目录
+            # 视你的 nginx root 配置而定，这里把前端文件同步到 html 目录
+            rm -rf /var/www/html/springbootAndVue/html/*
+            cp -r frontend/dist/* /var/www/html/springbootAndVue/html/
+
+            # 重载 nginx（容器里跑就 docker restart nginx；宿主机跑就 nginx -s reload）
+            docker restart nginx
