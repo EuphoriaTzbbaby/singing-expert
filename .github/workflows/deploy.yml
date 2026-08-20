@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:  # 支持手动触发
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -12,30 +12,51 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Deploy to server (git pull + build + restart)
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install & build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Pack backend + frontend dist
+        run: tar czf deploy.tar.gz backend/ frontend/dist/
+
+      - name: Upload package to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 47.101.42.177
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "deploy.tar.gz"
+          target: "/tmp/"
+          timeout: 120s
+
+      - name: Extract & restart services
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: 47.101.42.177
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          timeout: 300s
+          timeout: 120s
           script: |
             set -e
             cd /var/www/html/pythonAndVue/singing-expert
-            git fetch --all
-            git reset --hard origin/main
+            tar xzf /tmp/deploy.tar.gz
+            rm -f /tmp/deploy.tar.gz
 
-            # 后端：装依赖（venv 在项目外层目录，不受 git reset 影响）
             source /var/www/html/pythonAndVue/venv/bin/activate
             pip install -r backend/requirements.txt
 
-            # 前端：在服务器上构建
-            cd frontend
-            npm ci --production=false
-            npm run build
-            cd ..
-
-            # 重启服务
             systemctl restart singing-expert
             docker exec nginx nginx -s reload
 
