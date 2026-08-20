@@ -37,10 +37,16 @@ jobs:
 
             # 重启服务
             systemctl restart singing-expert
-            sleep 2
             docker exec nginx nginx -s reload
 
-            # 健康检查
+            # 健康检查（轮询重试，最多等 30 秒）
+            for i in $(seq 1 15); do
+              if curl -sf http://127.0.0.1:8000/api/health; then
+                break
+              fi
+              echo "等待后端启动... ($i/15)"
+              sleep 2
+            done
             curl -sf http://127.0.0.1:8000/api/health || (echo "后端健康检查失败"; exit 1)
             curl -sf -o /dev/null http://127.0.0.1:8080/ || (echo "前端访问失败"; exit 1)
             echo "部署完成 ✅"
