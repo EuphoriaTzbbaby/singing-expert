@@ -41,25 +41,27 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
 
     # 1.5) 自动迁移：给已有表加新列（create_all 不会 ALTER 已有表）
+    # 注意：表名一律加反引号，groups 是 MySQL 8.0 保留字（窗口函数），
+    #       不加反引号会 1064 语法错。
     with engine.connect() as conn:
         # pdf_files 加 group_id
-        if not conn.execute(text("SHOW COLUMNS FROM pdf_files LIKE 'group_id'")).fetchone():
-            conn.execute(text("ALTER TABLE pdf_files ADD COLUMN group_id BIGINT NULL, ADD INDEX idx_pdf_group_id (group_id)"))
+        if not conn.execute(text("SHOW COLUMNS FROM `pdf_files` LIKE 'group_id'")).fetchone():
+            conn.execute(text("ALTER TABLE `pdf_files` ADD COLUMN group_id BIGINT NULL, ADD INDEX idx_pdf_group_id (group_id)"))
             print("[migrate] pdf_files +group_id")
 
         # pdf_files 加 user_id
-        if not conn.execute(text("SHOW COLUMNS FROM pdf_files LIKE 'user_id'")).fetchone():
-            conn.execute(text("ALTER TABLE pdf_files ADD COLUMN user_id BIGINT NULL, ADD INDEX idx_pdf_user_id (user_id)"))
+        if not conn.execute(text("SHOW COLUMNS FROM `pdf_files` LIKE 'user_id'")).fetchone():
+            conn.execute(text("ALTER TABLE `pdf_files` ADD COLUMN user_id BIGINT NULL, ADD INDEX idx_pdf_user_id (user_id)"))
             print("[migrate] pdf_files +user_id")
 
         # groups 加 user_id
-        if not conn.execute(text("SHOW COLUMNS FROM groups LIKE 'user_id'")).fetchone():
-            conn.execute(text("ALTER TABLE groups ADD COLUMN user_id BIGINT NULL, ADD INDEX idx_group_user_id (user_id)"))
+        if not conn.execute(text("SHOW COLUMNS FROM `groups` LIKE 'user_id'")).fetchone():
+            conn.execute(text("ALTER TABLE `groups` ADD COLUMN user_id BIGINT NULL, ADD INDEX idx_group_user_id (user_id)"))
             print("[migrate] groups +user_id")
 
         # users 加 is_admin
-        if not conn.execute(text("SHOW COLUMNS FROM users LIKE 'is_admin'")).fetchone():
-            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
+        if not conn.execute(text("SHOW COLUMNS FROM `users` LIKE 'is_admin'")).fetchone():
+            conn.execute(text("ALTER TABLE `users` ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
             print("[migrate] users +is_admin")
 
         conn.commit()
