@@ -11,7 +11,7 @@ from config import settings
 from database import Base, engine, get_db
 from models import Group, PdfFile
 from schemas import (
-    FileMoveIn,
+    FileUpdateIn,
     GroupCreate,
     GroupOut,
     HealthOut,
@@ -179,14 +179,23 @@ async def upload_pdf(
 
 
 @app.get("/api/files", response_model=list[PdfFileOut])
-def list_pdfs(group_id: int | None = None, db: Session = Depends(get_db)):
-    """列出 PDF 文件（按上传时间倒序）。group_id 过滤：不传=全部，0=未分组，>0=指定分组"""
+def list_pdfs(
+    group_id: int | None = None,
+    keyword: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """列出 PDF 文件（按上传时间倒序）。
+    group_id 过滤：不传=全部，0=未分组，>0=指定分组
+    keyword: 按文件名模糊搜索（不区分大小写）
+    """
     q = db.query(PdfFile)
     if group_id is not None:
         if group_id == 0:
             q = q.filter(PdfFile.group_id.is_(None))
         else:
             q = q.filter(PdfFile.group_id == group_id)
+    if keyword:
+        q = q.filter(PdfFile.original_name.ilike(f"%{keyword}%"))
     return q.order_by(desc(PdfFile.created_at)).all()
 
 
@@ -230,16 +239,26 @@ def get_download_url_route(file_id: int, db: Session = Depends(get_db)):
 
 
 @app.patch("/api/files/{file_id}", response_model=PdfFileOut)
-def move_file(file_id: int, body: FileMoveIn, db: Session = Depends(get_db)):
-    """移动文件到分组（group_id=null = 移到未分组）"""
+def update_file(file_id: int, body: FileUpdateIn, db: Session = Depends(get_db)):
+    """更新文件（移动分组 + 重命名）"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="文件不存在")
+
+    # 移动分组
     if body.group_id is not None:
         grp = db.query(Group).filter(Group.id == body.group_id).first()
         if not grp:
             raise HTTPException(status_code=400, detail="目标分组不存在")
-    record.group_id = body.group_id
+        record.group_id = body.group_id
+
+    # 重命名
+    if body.original_name is not None:
+        name = body.original_name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="文件名不能为空")
+        record.original_name = name
+
     db.commit()
     db.refresh(record)
     return record

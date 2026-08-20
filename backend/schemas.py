@@ -68,10 +68,11 @@ class GroupOut(BaseModel):
         return _serialize_cst(v)
 
 
-class FileMoveIn(BaseModel):
-    """移动文件到分组请求"""
+class FileUpdateIn(BaseModel):
+    """更新文件（移动分组 + 重命名）"""
 
     group_id: Optional[int] = None  # None = 移到未分组
+    original_name: Optional[str] = None  # 重命名
 
 
 class SignedUrlOut(BaseModel):

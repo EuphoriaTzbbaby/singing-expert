@@ -35,15 +35,20 @@ export function uploadPdf(file, onUploadProgress, groupId) {
   })
 }
 
-// 列出 PDF（可选 group_id 过滤：不传=全部，0=未分组，>0=指定分组）
-export function listPdfs(groupId) {
-  const params = groupId !== undefined ? { group_id: groupId } : {}
+// 列出 PDF（可选 group_id 过滤 + keyword 搜索）
+export function listPdfs(groupId, keyword) {
+  const params = {}
+  if (groupId !== undefined) params.group_id = groupId
+  if (keyword) params.keyword = keyword
   return api.get('/files', { params })
 }
 
-// 移动文件到分组
-export function moveFile(id, groupId) {
-  return api.patch(`/files/${id}`, { group_id: groupId ?? null })
+// 更新文件（移动分组 + 重命名）
+export function updateFile(id, { group_id, original_name }) {
+  const body = {}
+  if (group_id !== undefined) body.group_id = group_id ?? null
+  if (original_name !== undefined) body.original_name = original_name
+  return api.patch(`/files/${id}`, body)
 }
 
 // 获取在线查看签名 URL

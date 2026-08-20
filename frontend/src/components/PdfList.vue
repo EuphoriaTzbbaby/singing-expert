@@ -2,7 +2,15 @@
   <section class="pdf-list">
     <div class="header">
       <h2 class="title">{{ headerTitle }}</h2>
-      <button class="refresh-btn" :disabled="loading" @click="load(groupId)">刷新</button>
+      <div class="header-actions">
+        <input
+          v-model="keyword"
+          class="search-input"
+          placeholder="搜索文件名…"
+          @input="onSearch"
+        />
+        <button class="refresh-btn" :disabled="loading" @click="load()">刷新</button>
+      </div>
     </div>
 
     <div v-if="loading" class="state">加载中…</div>
@@ -26,6 +34,7 @@
             <option value="">— 未分组 —</option>
             <option v-for="g in groups" :key="g.id" :value="g.id">📁 {{ g.name }}</option>
           </select>
+          <button class="btn-rename" :disabled="actionId === f.id" @click="onRename(f)">重命名</button>
           <button class="btn-view" :disabled="actionId === f.id" @click="onView(f)">查看</button>
           <button class="btn-download" :disabled="actionId === f.id" @click="onDownload(f)">下载</button>
           <button class="btn-delete" :disabled="actionId === f.id" @click="onDelete(f)">
@@ -50,7 +59,7 @@
 
 <script setup>
 import { onMounted, ref, computed } from 'vue'
-import { deletePdf, getDownloadUrl, listGroups, listPdfs, moveFile } from '../api'
+import { deletePdf, getDownloadUrl, listGroups, listPdfs, updateFile } from '../api'
 
 const props = defineProps({
   groupId: { type: [Number, undefined], default: undefined },
@@ -64,6 +73,8 @@ const loading = ref(false)
 const actionId = ref(null)
 const viewerUrl = ref('')
 const viewerName = ref('')
+const keyword = ref('')
+let searchTimer = null
 
 const headerTitle = computed(() => {
   if (props.groupId === undefined) return '已上传文件'
@@ -72,10 +83,10 @@ const headerTitle = computed(() => {
   return g ? g.name : '已上传文件'
 })
 
-async function load(gid = props.groupId) {
+async function load(gid = props.groupId, kw = keyword.value) {
   loading.value = true
   try {
-    const { data } = await listPdfs(gid)
+    const { data } = await listPdfs(gid, kw)
     files.value = data
   } finally {
     loading.value = false
@@ -87,18 +98,40 @@ async function loadGroups() {
   groups.value = data
 }
 
+function onSearch() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => load(props.groupId, keyword.value), 300)
+}
+
 async function onMove(f, e) {
   const val = e.target.value
   const targetGroupId = val ? Number(val) : null
   try {
-    await moveFile(f.id, targetGroupId)
+    await updateFile(f.id, { group_id: targetGroupId })
     f.group_id = targetGroupId
     await loadGroups()
     emit('groups-updated')
   } catch (err) {
     const msg = err?.response?.data?.detail || '移动失败'
     window.alert(`移动失败：${msg}`)
-    await load(props.groupId)
+    await load()
+  }
+}
+
+async function onRename(f) {
+  const newName = window.prompt('输入新的文件名：', f.original_name)
+  if (newName === null) return
+  const trimmed = newName.trim()
+  if (!trimmed || trimmed === f.original_name) return
+  actionId.value = f.id
+  try {
+    await updateFile(f.id, { original_name: trimmed })
+    f.original_name = trimmed
+  } catch (err) {
+    const msg = err?.response?.data?.detail || '重命名失败'
+    window.alert(`重命名失败：${msg}`)
+  } finally {
+    actionId.value = null
   }
 }
 
@@ -185,9 +218,27 @@ defineExpose({ load })
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 .title {
   font-size: 18px;
+}
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.search-input {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  outline: none;
+  width: 180px;
+}
+.search-input:focus {
+  border-color: #2563eb;
 }
 .refresh-btn {
   background: #f3f4f6;
@@ -263,6 +314,7 @@ defineExpose({ load })
 .move-select:focus {
   border-color: #2563eb;
 }
+.btn-rename,
 .btn-view,
 .btn-download,
 .btn-delete {
@@ -273,6 +325,9 @@ defineExpose({ load })
   cursor: pointer;
   font-size: 13px;
 }
+.btn-rename {
+  background: #059669;
+}
 .btn-view {
   background: #2563eb;
 }
@@ -281,6 +336,9 @@ defineExpose({ load })
 }
 .btn-delete {
   background: #dc2626;
+}
+.btn-rename:hover:not(:disabled) {
+  background: #047857;
 }
 .btn-view:hover:not(:disabled) {
   background: #1d4ed8;
