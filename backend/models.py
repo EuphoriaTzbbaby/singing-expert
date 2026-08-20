@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String
 
 from database import Base
 
@@ -26,6 +26,7 @@ class User(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     username = Column(String(50), unique=True, nullable=False, comment="用户名")
     password_hash = Column(String(255), nullable=False, comment="bcrypt 哈希后的密码")
+    is_admin = Column(Boolean, default=False, nullable=False, comment="是否管理员")
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
 
     __table_args__ = (Index("idx_user_username", "username"),)
@@ -56,6 +57,7 @@ class Group(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False, comment="分组名称")
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, comment="所属用户ID（NULL=公共）")
 
     __table_args__ = (Index("idx_group_name", "name"),)
 
@@ -74,9 +76,11 @@ class PdfFile(Base):
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
     # 分组外键（可空 = 未分组）
     group_id = Column(BigInteger, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True, comment="所属分组ID")
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, comment="上传者ID（NULL=公共）")
 
     __table_args__ = (
         Index("idx_pdf_created_at", "created_at"),
         Index("idx_pdf_oss_key", "oss_key"),
         Index("idx_pdf_group_id", "group_id"),
+        Index("idx_pdf_user_id", "user_id"),
     )
