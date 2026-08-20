@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import BigInteger, Column, DateTime, Index, Integer, String
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Index, Integer, String
 
 from database import Base
 
@@ -35,6 +35,18 @@ class AppConfig(Base):
     configValue = Column(String(1000), nullable=False)
 
 
+class Group(Base):
+    """文件分组表"""
+
+    __tablename__ = "groups"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, comment="分组名称")
+    created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+
+    __table_args__ = (Index("idx_group_name", "name"),)
+
+
 class PdfFile(Base):
     """PDF 文件元数据表（文件本身存在 OSS，这里只存链接/元数据）"""
 
@@ -47,8 +59,11 @@ class PdfFile(Base):
     mime_type = Column(String(100), default="application/pdf", nullable=False)
     # ↓ 关键修复：从 datetime.utcnow 改为 now_cst（北京时间，含时区信息）
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+    # 分组外键（可空 = 未分组）
+    group_id = Column(BigInteger, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True, comment="所属分组ID")
 
     __table_args__ = (
         Index("idx_pdf_created_at", "created_at"),
         Index("idx_pdf_oss_key", "oss_key"),
+        Index("idx_pdf_group_id", "group_id"),
     )

@@ -5,19 +5,45 @@ const api = axios.create({
   timeout: 60_000,
 })
 
-// 上传 PDF，带进度回调
-export function uploadPdf(file, onUploadProgress) {
+// ==================== 分组 ====================
+
+// 列出全部分组（带文件数）
+export function listGroups() {
+  return api.get('/groups')
+}
+
+// 创建分组
+export function createGroup(name) {
+  return api.post('/groups', { name })
+}
+
+// 删除分组（文件会移到未分组）
+export function deleteGroup(id) {
+  return api.delete(`/groups/${id}`).then((r) => r.data)
+}
+
+// ==================== PDF 文件 ====================
+
+// 上传 PDF，带进度回调，可选 group_id
+export function uploadPdf(file, onUploadProgress, groupId) {
   const form = new FormData()
   form.append('file', file)
+  if (groupId) form.append('group_id', groupId)
   return api.post('/files/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress,
   })
 }
 
-// 列出全部 PDF
-export function listPdfs() {
-  return api.get('/files')
+// 列出 PDF（可选 group_id 过滤：不传=全部，0=未分组，>0=指定分组）
+export function listPdfs(groupId) {
+  const params = groupId !== undefined ? { group_id: groupId } : {}
+  return api.get('/files', { params })
+}
+
+// 移动文件到分组
+export function moveFile(id, groupId) {
+  return api.patch(`/files/${id}`, { group_id: groupId ?? null })
 }
 
 // 获取在线查看签名 URL

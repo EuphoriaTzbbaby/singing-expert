@@ -1,8 +1,8 @@
 <template>
   <section class="pdf-list">
     <div class="header">
-      <h2 class="title">已上传文件</h2>
-      <button class="refresh-btn" :disabled="loading" @click="load">刷新</button>
+      <h2 class="title">{{ headerTitle }}</h2>
+      <button class="refresh-btn" :disabled="loading" @click="load(groupId)">刷新</button>
     </div>
 
     <div v-if="loading" class="state">加载中…</div>
@@ -17,25 +17,18 @@
           </div>
         </div>
         <div class="actions">
-          <button
-            class="btn-view"
-            :disabled="actionId === f.id"
-            @click="onView(f)"
+          <select
+            class="move-select"
+            :value="f.group_id ?? ''"
+            @change="onMove(f, $event)"
+            title="移动到分组"
           >
-            {{ actionId === f.id ? '生成中…' : '查看' }}
-          </button>
-          <button
-            class="btn-download"
-            :disabled="actionId === f.id"
-            @click="onDownload(f)"
-          >
-            下载
-          </button>
-          <button
-            class="btn-delete"
-            :disabled="actionId === f.id"
-            @click="onDelete(f)"
-          >
+            <option value="">— 未分组 —</option>
+            <option v-for="g in groups" :key="g.id" :value="g.id">📁 {{ g.name }}</option>
+          </select>
+          <button class="btn-view" :disabled="actionId === f.id" @click="onView(f)">查看</button>
+          <button class="btn-download" :disabled="actionId === f.id" @click="onDownload(f)">下载</button>
+          <button class="btn-delete" :disabled="actionId === f.id" @click="onDelete(f)">
             {{ actionId === f.id ? '删除中…' : '删除' }}
           </button>
         </div>
@@ -56,33 +49,62 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { deletePdf, getDownloadUrl, getViewUrl, listPdfs } from '../api'
+import { onMounted, ref, computed } from 'vue'
+import { deletePdf, getDownloadUrl, listGroups, listPdfs, moveFile } from '../api'
+
+const props = defineProps({
+  groupId: { type: [Number, undefined], default: undefined },
+})
+
+const emit = defineEmits(['groups-updated'])
 
 const files = ref([])
+const groups = ref([])
 const loading = ref(false)
 const actionId = ref(null)
 const viewerUrl = ref('')
 const viewerName = ref('')
 
-async function load() {
+const headerTitle = computed(() => {
+  if (props.groupId === undefined) return '已上传文件'
+  if (props.groupId === 0) return '未分组文件'
+  const g = groups.value.find((x) => x.id === props.groupId)
+  return g ? g.name : '已上传文件'
+})
+
+async function load(gid = props.groupId) {
   loading.value = true
   try {
-    const { data } = await listPdfs()
+    const { data } = await listPdfs(gid)
     files.value = data
   } finally {
     loading.value = false
   }
 }
 
+async function loadGroups() {
+  const { data } = await listGroups()
+  groups.value = data
+}
+
+async function onMove(f, e) {
+  const val = e.target.value
+  const targetGroupId = val ? Number(val) : null
+  try {
+    await moveFile(f.id, targetGroupId)
+    f.group_id = targetGroupId
+    await loadGroups()
+    emit('groups-updated')
+  } catch (err) {
+    const msg = err?.response?.data?.detail || '移动失败'
+    window.alert(`移动失败：${msg}`)
+    await load(props.groupId)
+  }
+}
+
 async function onView(f) {
   actionId.value = f.id
   try {
-    // 走同源后端代理 /api/files/{id}/view
-    //  —— 后端流式转发 OSS 的 PDF，并强制返回 Content-Disposition: inline。
-    //  原因：当前 cwwdka 这个 OSS bucket 开了「默认强制下载 attachment」+
-    //       禁用了 response-content-type override，直接用 OSS 签名 URL
-    //       的话 iframe 会被浏览器当成下载而不是内嵌渲染 PDF 阅读器。
     viewerName.value = f.original_name
     viewerUrl.value = `/api/files/${f.id}/view`
   } finally {
@@ -111,14 +133,15 @@ async function onDelete(f) {
       `文件大小：${formatSize(f.file_size)}\n` +
       `上传时间：${formatDate(f.created_at)}\n\n` +
       `这个操作会同时删除阿里云 OSS 里的文件对象 + 数据库记录，\n` +
-      `**删除后无法恢复**，请确认。`
+      `删除后无法恢复，请确认。`
   )
   if (!ok) return
   actionId.value = f.id
   try {
     await deletePdf(f.id)
-    // 删除成功后直接刷新列表
-    await load()
+    await load(props.groupId)
+    await loadGroups()
+    emit('groups-updated')
   } catch (e) {
     const msg = e?.response?.data?.detail || e?.message || '删除失败'
     window.alert(`删除失败：${msg}`)
@@ -142,7 +165,11 @@ function formatDate(s) {
   return new Date(s).toLocaleString('zh-CN', { hour12: false })
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadGroups()
+})
+
 defineExpose({ load })
 </script>
 
@@ -197,6 +224,7 @@ defineExpose({ load })
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .item:hover {
   border-color: #cbd5e1;
@@ -220,6 +248,20 @@ defineExpose({ load })
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+  align-items: center;
+}
+.move-select {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: #6b7280;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+}
+.move-select:focus {
+  border-color: #2563eb;
 }
 .btn-view,
 .btn-download,

@@ -1,5 +1,14 @@
 <template>
   <section class="upload-panel">
+    <!-- 分组选择（上传前选好） -->
+    <div v-if="groups.length" class="group-selector">
+      <span class="label">上传到分组：</span>
+      <select v-model="selectedGroup" class="group-select">
+        <option :value="null">— 未分组 —</option>
+        <option v-for="g in groups" :key="g.id" :value="g.id">📁 {{ g.name }}</option>
+      </select>
+    </div>
+
     <div
       class="dropzone"
       :class="{ dragging, disabled: uploading }"
@@ -36,6 +45,11 @@
 import { ref } from 'vue'
 import { uploadPdf } from '../api'
 
+const props = defineProps({
+  groups: { type: Array, default: () => [] },
+  currentGroup: { type: [Number, undefined], default: undefined },
+})
+
 const emit = defineEmits(['uploaded'])
 
 const fileInput = ref(null)
@@ -44,6 +58,7 @@ const uploading = ref(false)
 const percent = ref(0)
 const errorMsg = ref('')
 const successMsg = ref('')
+const selectedGroup = ref(null)
 
 function pickFile() {
   if (uploading.value) return
@@ -74,12 +89,15 @@ async function handleFile(file) {
     return
   }
 
+  // 如果当前侧边栏选了某个分组（非"全部"、非"未分组"），默认上传到那个分组
+  const groupId = selectedGroup.value ?? props.currentGroup ?? undefined
+
   uploading.value = true
   percent.value = 0
   try {
     await uploadPdf(file, (e) => {
       if (e.total) percent.value = Math.round((e.loaded / e.total) * 100)
-    })
+    }, groupId)
     successMsg.value = `已上传：${file.name}`
     emit('uploaded')
   } catch (err) {
@@ -97,6 +115,30 @@ async function handleFile(file) {
   border-radius: 12px;
   padding: 24px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.group-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.label {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+.group-select {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  color: #374151;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+}
+.group-select:focus {
+  border-color: #2563eb;
 }
 .dropzone {
   border: 2px dashed #cbd5e1;

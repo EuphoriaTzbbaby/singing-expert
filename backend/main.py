@@ -1,16 +1,23 @@
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import desc
+from sqlalchemy import desc, func, text
 from sqlalchemy.orm import Session
 
 from config import settings
 from database import Base, engine, get_db
-from models import PdfFile
-from schemas import HealthOut, PdfFileOut, SignedUrlOut
+from models import Group, PdfFile
+from schemas import (
+    FileMoveIn,
+    GroupCreate,
+    GroupOut,
+    HealthOut,
+    PdfFileOut,
+    SignedUrlOut,
+)
 from storage import (
     delete_from_oss,
     gen_download_url,
@@ -23,12 +30,23 @@ from storage import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1) 启动时把本地模型对应的表建好（pdf_files，config 表用户已建好会跳过）
-    #    生产请用 Alembic 迁移
+    # 1) 启动时把本地模型对应的表建好（pdf_files, groups, config）
     Base.metadata.create_all(bind=engine)
 
-    # 2) 预热：从 config 表读一次 OSS 配置 —— 读不出来启动就直接报错，
-    #    避免请求进来时才失败
+    # 1.5) 自动迁移：给已有的 pdf_files 表加 group_id 列（create_all 不会 ALTER 已有表）
+    with engine.connect() as conn:
+        result = conn.execute(text("SHOW COLUMNS FROM pdf_files LIKE 'group_id'"))
+        if not result.fetchone():
+            conn.execute(
+                text(
+                    "ALTER TABLE pdf_files ADD COLUMN group_id BIGINT NULL, "
+                    "ADD INDEX idx_pdf_group_id (group_id)"
+                )
+            )
+            conn.commit()
+            print("[migrate] pdf_files 表已加 group_id 列")
+
+    # 2) 预热：从 config 表读一次 OSS 配置
     from app_config import load_oss_config
     from database import SessionLocal
 
@@ -47,8 +65,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Singing Expert - PDF 工具",
-    version="0.1.0",
-    description="PDF 上传 / 在线查看 / 下载（OSS 存储 + MySQL 元数据）",
+    version="0.2.0",
+    description="PDF 上传 / 在线查看 / 下载 / 分组管理（OSS 存储 + MySQL 元数据）",
     lifespan=lifespan,
 )
 
@@ -70,17 +88,63 @@ def _validate_pdf(file: UploadFile) -> None:
         raise HTTPException(status_code=400, detail="文件扩展名必须为 .pdf")
 
 
+# ==================== 健康检查 ====================
+
+
 @app.get("/api/health", response_model=HealthOut)
 def health():
     return {"status": "ok"}
 
 
+# ==================== 分组管理 ====================
+
+
+@app.get("/api/groups", response_model=list[GroupOut])
+def list_groups(db: Session = Depends(get_db)):
+    """列出所有分组，带每个分组的文件数"""
+    groups = db.query(Group).order_by(desc(Group.created_at)).all()
+    result = []
+    for g in groups:
+        count = db.query(func.count(PdfFile.id)).filter(PdfFile.group_id == g.id).scalar() or 0
+        result.append(GroupOut(id=g.id, name=g.name, created_at=g.created_at, file_count=count))
+    return result
+
+
+@app.post("/api/groups", response_model=GroupOut, status_code=201)
+def create_group(body: GroupCreate, db: Session = Depends(get_db)):
+    """创建分组"""
+    existing = db.query(Group).filter(Group.name == body.name).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="分组名已存在")
+    record = Group(name=body.name)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return GroupOut(id=record.id, name=record.name, created_at=record.created_at, file_count=0)
+
+
+@app.delete("/api/groups/{group_id}")
+def delete_group(group_id: int, db: Session = Depends(get_db)):
+    """删除分组（文件不会被删，group_id 被置 NULL = 移到未分组）"""
+    record = db.query(Group).filter(Group.id == group_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="分组不存在")
+    name = record.name
+    db.delete(record)
+    db.commit()
+    return {"ok": True, "id": group_id, "name": name}
+
+
+# ==================== PDF 文件管理 ====================
+
+
 @app.post("/api/files/upload", response_model=PdfFileOut)
 async def upload_pdf(
     file: UploadFile = File(...),
+    group_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
 ):
-    """上传 PDF：服务端转发到 OSS，元数据写 MySQL"""
+    """上传 PDF：服务端转发到 OSS，元数据写 MySQL（可选分组）"""
     _validate_pdf(file)
 
     content = await file.read()
@@ -95,11 +159,18 @@ async def upload_pdf(
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"上传到 OSS 失败: {e}")
 
+    # 如果指定了分组，校验分组存在
+    if group_id is not None:
+        grp = db.query(Group).filter(Group.id == group_id).first()
+        if not grp:
+            raise HTTPException(status_code=400, detail="指定的分组不存在")
+
     record = PdfFile(
         original_name=original_name,
         oss_key=oss_key,
         file_size=len(content),
         mime_type="application/pdf",
+        group_id=group_id,
     )
     db.add(record)
     db.commit()
@@ -108,14 +179,20 @@ async def upload_pdf(
 
 
 @app.get("/api/files", response_model=list[PdfFileOut])
-def list_pdfs(db: Session = Depends(get_db)):
-    """列出所有已上传的 PDF（按上传时间倒序）"""
-    return db.query(PdfFile).order_by(desc(PdfFile.created_at)).all()
+def list_pdfs(group_id: int | None = None, db: Session = Depends(get_db)):
+    """列出 PDF 文件（按上传时间倒序）。group_id 过滤：不传=全部，0=未分组，>0=指定分组"""
+    q = db.query(PdfFile)
+    if group_id is not None:
+        if group_id == 0:
+            q = q.filter(PdfFile.group_id.is_(None))
+        else:
+            q = q.filter(PdfFile.group_id == group_id)
+    return q.order_by(desc(PdfFile.created_at)).all()
 
 
 @app.get("/api/files/{file_id}/view-url", response_model=SignedUrlOut)
 def get_view_url(file_id: int, db: Session = Depends(get_db)):
-    """获取在线查看的 OSS 签名 URL（保留兼容，但 iframe 推荐走 /view 同源代理）"""
+    """获取在线查看的 OSS 签名 URL"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -123,57 +200,54 @@ def get_view_url(file_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/files/{file_id}/view")
-def stream_pdf_view(
-    file_id: int,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    """
-    在线查看：后端把 OSS 的 PDF 字节流代理回来，**同源**返回给前端 iframe。
-    这么做主要是绕开当前 OSS bucket cwwdka 的两条限制：
-      1) bucket 开启了「默认强制下载」= Content-Disposition: attachment
-      2) bucket 不允许通过签名 URL 的 response-content-type 参数覆盖
-         （InvalidRequest: Can not override response header on content-type）
-    流式读取不会把整份文件加载进内存，100MB PDF 也能稳定处理。
-    """
+def stream_pdf_view(file_id: int, db: Session = Depends(get_db)):
+    """在线查看：后端同源代理 OSS PDF 字节流，强制 inline"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="文件不存在")
 
     try:
-        total_bytes, body_iter = get_object_stream(record.oss_key)
+        total_bytes, body_iter = get_object_stream(record.oss_key)  # noqa: F841
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"从 OSS 拉取文件失败: {e}")
 
     disposition = f"inline; filename*=UTF-8''{quote(record.original_name)}"
-    headers = {
-        "Content-Disposition": disposition,
-        # 显式 no-store 也行；但 Content-Length 给浏览器能更友好显示
-    }
     return StreamingResponse(
         body_iter,
         media_type="application/pdf",
         status_code=200,
-        headers=headers,
+        headers={"Content-Disposition": disposition},
     )
 
 
 @app.get("/api/files/{file_id}/download-url", response_model=SignedUrlOut)
 def get_download_url_route(file_id: int, db: Session = Depends(get_db)):
-    """获取下载用的 OSS 签名 URL（attachment，文件名走 RFC 5987 编码）"""
+    """获取下载用的 OSS 签名 URL（attachment）"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="文件不存在")
     return {"url": gen_download_url(record.oss_key, record.original_name)}
 
 
+@app.patch("/api/files/{file_id}", response_model=PdfFileOut)
+def move_file(file_id: int, body: FileMoveIn, db: Session = Depends(get_db)):
+    """移动文件到分组（group_id=null = 移到未分组）"""
+    record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if body.group_id is not None:
+        grp = db.query(Group).filter(Group.id == body.group_id).first()
+        if not grp:
+            raise HTTPException(status_code=400, detail="目标分组不存在")
+    record.group_id = body.group_id
+    db.commit()
+    db.refresh(record)
+    return record
+
+
 @app.delete("/api/files/{file_id}")
 def delete_pdf(file_id: int, db: Session = Depends(get_db)):
-    """
-    删除一条 PDF 记录 = 先删 OSS 对象 + 再删 MySQL 行。
-    顺序（关键）：先查 DB 拿到 oss_key -> 删 OSS（幂等，不存在也不报错） -> 删 DB 行。
-    如果反过来先删 DB，万一 OSS 删除失败就再也找不到 oss_key，对象永久成孤儿。
-    """
+    """删除 PDF = 先删 OSS + 再删 MySQL"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -181,33 +255,19 @@ def delete_pdf(file_id: int, db: Session = Depends(get_db)):
     oss_key = record.oss_key
     original_name = record.original_name
 
-    # Step 1: 删 OSS（幂等，哪怕对象之前就不存在也当成功）
     try:
         delete_from_oss(oss_key)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502,
-            detail=f"OSS 对象删除失败: {e}",
-        )
+        raise HTTPException(status_code=502, detail=f"OSS 对象删除失败: {e}")
 
-    # Step 2: 删 MySQL 行（事务里，这一步失败前面 OSS 可能已经删了；
-    #         但因为对象已经不存在也不影响，最多留一条无效记录可以再点一次删除）
     try:
         db.delete(record)
         db.commit()
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"数据库记录删除失败: {e}",
-        )
+        raise HTTPException(status_code=500, detail=f"数据库记录删除失败: {e}")
 
-    return {
-        "ok": True,
-        "id": file_id,
-        "original_name": original_name,
-        "deleted_oss_key": oss_key,
-    }
+    return {"ok": True, "id": file_id, "original_name": original_name, "deleted_oss_key": oss_key}
 
 
 if __name__ == "__main__":
