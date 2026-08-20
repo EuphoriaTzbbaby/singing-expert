@@ -219,3 +219,43 @@ class SetAdminIn(BaseModel):
     """修改管理员标志请求"""
 
     is_admin: bool
+
+
+# ==================== 账号自服务 ====================
+
+
+class ProfileOut(BaseModel):
+    """用户个人资料（含存储用量）"""
+
+    id: int
+    username: str
+    is_admin: bool
+    created_at: datetime
+    file_count: int = 0
+    storage_bytes: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _ensure_tz(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=CST)
+        return v
+
+    @field_serializer("created_at")
+    def _ser_created(self, v: datetime) -> str:
+        return _serialize_cst(v)
+
+
+class ChangePasswordIn(BaseModel):
+    """用户自己修改密码请求（需验证旧密码）"""
+
+    old_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+
+class DeleteSelfIn(BaseModel):
+    """用户注销账号请求（需输入当前密码确认）"""
+
+    password: str = Field(..., min_length=1, max_length=128)

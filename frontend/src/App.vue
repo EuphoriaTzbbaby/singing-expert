@@ -15,9 +15,15 @@
             class="admin-btn"
             @click="enterAdmin"
           >管理端</button>
-          <!-- 管理端视图下：返回用户端 -->
+          <!-- 所有登录用户可见：进入账号设置 -->
           <button
-            v-if="view === 'admin'"
+            v-if="view === 'user'"
+            class="account-btn"
+            @click="enterAccount"
+          >账号</button>
+          <!-- 管理端/账号视图下：返回用户端 -->
+          <button
+            v-if="view !== 'user'"
             class="back-btn"
             @click="backToUser"
           >← 返回用户端</button>
@@ -28,6 +34,11 @@
       <!-- 管理端视图 -->
       <main v-if="view === 'admin'" class="app-body">
         <AdminView />
+      </main>
+
+      <!-- 账号视图 -->
+      <main v-else-if="view === 'account'" class="app-body">
+        <AccountView @logged-out="onLogout" />
       </main>
 
       <!-- 用户端视图 -->
@@ -44,6 +55,7 @@
 
 <script setup>
 import { nextTick, onMounted, ref } from 'vue'
+import AccountView from './components/AccountView.vue'
 import AdminView from './components/AdminView.vue'
 import GroupSidebar from './components/GroupSidebar.vue'
 import LoginView from './components/LoginView.vue'
@@ -56,7 +68,7 @@ const listRef = ref(null)
 const currentGroup = ref(undefined)
 const groups = ref([])
 const currentUser = ref(null) // { id, username, is_admin }
-const view = ref('user') // 'user' | 'admin'
+const view = ref('user') // 'user' | 'admin' | 'account'
 
 // 启动时检查登录状态
 onMounted(async () => {
@@ -87,9 +99,13 @@ function enterAdmin() {
   view.value = 'admin'
 }
 
+function enterAccount() {
+  view.value = 'account'
+}
+
 function backToUser() {
   view.value = 'user'
-  // 管理员可能在管理端改了用户/文件/分组，返回时刷新用户端列表
+  // 管理员可能在管理端/账号端改了用户/文件，返回时刷新用户端列表
   nextTick(() => refresh())
 }
 
@@ -158,6 +174,18 @@ body {
 }
 .admin-btn:hover {
   background: #059669;
+}
+.account-btn {
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.account-btn:hover {
+  background: #4f46e5;
 }
 .back-btn {
   background: #6b7280;

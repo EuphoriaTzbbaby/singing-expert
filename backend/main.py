@@ -20,6 +20,8 @@ from config import settings
 from database import Base, engine, get_db
 from models import Group, PdfFile, User
 from schemas import (
+    ChangePasswordIn,
+    DeleteSelfIn,
     FileUpdateIn,
     GroupAdminOut,
     GroupCreate,
@@ -28,6 +30,7 @@ from schemas import (
     LoginIn,
     PdfFileAdminOut,
     PdfFileOut,
+    ProfileOut,
     RegisterIn,
     ResetPasswordIn,
     SetAdminIn,
@@ -159,6 +162,73 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 def get_me(current_user: User = Depends(get_current_user)):
     """获取当前登录用户信息"""
     return current_user
+
+
+@app.get("/api/auth/profile", response_model=ProfileOut)
+def get_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取当前用户个人资料（含文件数 + 存储大小）"""
+    file_count = (
+        db.query(func.count(PdfFile.id)).filter(PdfFile.user_id == current_user.id).scalar() or 0
+    )
+    storage = (
+        db.query(func.coalesce(func.sum(PdfFile.file_size), 0))
+        .filter(PdfFile.user_id == current_user.id)
+        .scalar()
+        or 0
+    )
+    return ProfileOut(
+        id=current_user.id,
+        username=current_user.username,
+        is_admin=current_user.is_admin,
+        created_at=current_user.created_at,
+        file_count=file_count,
+        storage_bytes=storage,
+    )
+
+
+@app.post("/api/auth/change-password")
+def change_password(
+    body: ChangePasswordIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """用户自己修改密码：必须验证旧密码"""
+    if not verify_password(body.old_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="旧密码错误")
+    if body.old_password == body.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与旧密码相同")
+    current_user.password_hash = hash_password(body.new_password)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/auth/delete-self")
+def delete_self(
+    body: DeleteSelfIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """用户注销账号：必须输入当前密码确认。
+    流程：验证密码 → 循环删该用户所有 OSS 对象 → db.delete(user)（CASCADE 带走 PdfFile/Group 行）。
+    OSS 删除失败不阻塞，返回 failed_oss_keys 供运维跟进。
+    """
+    if not verify_password(body.password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="密码错误，注销失败")
+
+    pdfs = db.query(PdfFile).filter(PdfFile.user_id == current_user.id).all()
+    failed_oss_keys = []
+    for p in pdfs:
+        try:
+            delete_from_oss(p.oss_key)
+        except Exception:  # noqa: BLE001
+            failed_oss_keys.append(p.oss_key)
+
+    db.delete(current_user)
+    db.commit()
+    return {"ok": True, "id": current_user.id, "failed_oss_keys": failed_oss_keys}
 
 
 # ==================== 分组管理 ====================

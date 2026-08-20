@@ -61,6 +61,21 @@ export function getMe() {
   return api.get('/auth/me').then((r) => r.data)
 }
 
+// 获取个人资料（含文件数 + 存储用量）
+export function getProfile() {
+  return api.get('/auth/profile').then((r) => r.data)
+}
+
+// 修改自己密码（需验证旧密码）
+export function changePassword({ old_password, new_password }) {
+  return api.post('/auth/change-password', { old_password, new_password }).then((r) => r.data)
+}
+
+// 注销账号（需输入当前密码确认）
+export function deleteSelf({ password }) {
+  return api.post('/auth/delete-self', { password }).then((r) => r.data)
+}
+
 // ==================== 分组 ====================
 
 // 列出全部分组（带文件数）
