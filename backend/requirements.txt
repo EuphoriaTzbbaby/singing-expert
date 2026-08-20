@@ -8,3 +8,5 @@ pydantic-settings==2.15.0
 python-dotenv==1.2.3
 python-multipart==0.0.32
 oss2==2.19.1
+bcrypt==4.3.0
+PyJWT==2.10.1

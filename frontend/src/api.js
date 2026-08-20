@@ -5,6 +5,62 @@ const api = axios.create({
   timeout: 60_000,
 })
 
+// ==================== Token 管理 ====================
+
+const TOKEN_KEY = 'singing_expert_token'
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY)
+}
+
+export function setToken(token) {
+  localStorage.setItem(TOKEN_KEY, token)
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY)
+}
+
+// 请求拦截器：自动带 Bearer token
+api.interceptors.request.use((config) => {
+  const token = getToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 响应拦截器：401 自动清 token（让 App 跳回登录页）
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err?.response?.status === 401) {
+      clearToken()
+    }
+    return Promise.reject(err)
+  }
+)
+
+// ==================== 认证 ====================
+
+export function login(username, password) {
+  return api.post('/auth/login', { username, password }).then((r) => {
+    setToken(r.data.access_token)
+    return r.data
+  })
+}
+
+export function register(username, password) {
+  return api.post('/auth/register', { username, password }).then((r) => {
+    setToken(r.data.access_token)
+    return r.data
+  })
+}
+
+export function getMe() {
+  return api.get('/auth/me').then((r) => r.data)
+}
+
 // ==================== 分组 ====================
 
 // 列出全部分组（带文件数）

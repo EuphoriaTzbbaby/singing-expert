@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
@@ -7,16 +9,21 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, text
 from sqlalchemy.orm import Session
 
+from auth import create_access_token, get_current_user, hash_password, verify_password
 from config import settings
 from database import Base, engine, get_db
-from models import Group, PdfFile
+from models import Group, PdfFile, User
 from schemas import (
     FileUpdateIn,
     GroupCreate,
     GroupOut,
     HealthOut,
+    LoginIn,
     PdfFileOut,
+    RegisterIn,
     SignedUrlOut,
+    TokenOut,
+    UserOut,
 )
 from storage import (
     delete_from_oss,
@@ -96,11 +103,44 @@ def health():
     return {"status": "ok"}
 
 
+# ==================== 认证 ====================
+
+
+@app.post("/api/auth/register", response_model=TokenOut, status_code=201)
+def register(body: RegisterIn, db: Session = Depends(get_db)):
+    """注册新用户"""
+    existing = db.query(User).filter(User.username == body.username).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="用户名已存在")
+    user = User(username=body.username, password_hash=hash_password(body.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token(user.id, user.username)
+    return TokenOut(access_token=token, username=user.username)
+
+
+@app.post("/api/auth/login", response_model=TokenOut)
+def login(body: LoginIn, db: Session = Depends(get_db)):
+    """登录"""
+    user = db.query(User).filter(User.username == body.username).first()
+    if not user or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    token = create_access_token(user.id, user.username)
+    return TokenOut(access_token=token, username=user.username)
+
+
+@app.get("/api/auth/me", response_model=UserOut)
+def get_me(current_user: User = Depends(get_current_user)):
+    """获取当前登录用户信息"""
+    return current_user
+
+
 # ==================== 分组管理 ====================
 
 
 @app.get("/api/groups", response_model=list[GroupOut])
-def list_groups(db: Session = Depends(get_db)):
+def list_groups(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """列出所有分组，带每个分组的文件数"""
     groups = db.query(Group).order_by(desc(Group.created_at)).all()
     result = []
@@ -111,7 +151,7 @@ def list_groups(db: Session = Depends(get_db)):
 
 
 @app.post("/api/groups", response_model=GroupOut, status_code=201)
-def create_group(body: GroupCreate, db: Session = Depends(get_db)):
+def create_group(body: GroupCreate, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """创建分组"""
     existing = db.query(Group).filter(Group.name == body.name).first()
     if existing:
@@ -124,7 +164,7 @@ def create_group(body: GroupCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/groups/{group_id}")
-def delete_group(group_id: int, db: Session = Depends(get_db)):
+def delete_group(group_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """删除分组（文件不会被删，group_id 被置 NULL = 移到未分组）"""
     record = db.query(Group).filter(Group.id == group_id).first()
     if not record:
@@ -143,6 +183,7 @@ async def upload_pdf(
     file: UploadFile = File(...),
     group_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
     """上传 PDF：服务端转发到 OSS，元数据写 MySQL（可选分组）"""
     _validate_pdf(file)
@@ -183,6 +224,7 @@ def list_pdfs(
     group_id: int | None = None,
     keyword: str | None = None,
     db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
     """列出 PDF 文件（按上传时间倒序）。
     group_id 过滤：不传=全部，0=未分组，>0=指定分组
@@ -200,7 +242,7 @@ def list_pdfs(
 
 
 @app.get("/api/files/{file_id}/view-url", response_model=SignedUrlOut)
-def get_view_url(file_id: int, db: Session = Depends(get_db)):
+def get_view_url(file_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """获取在线查看的 OSS 签名 URL"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
@@ -209,7 +251,7 @@ def get_view_url(file_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/files/{file_id}/view")
-def stream_pdf_view(file_id: int, db: Session = Depends(get_db)):
+def stream_pdf_view(file_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """在线查看：后端同源代理 OSS PDF 字节流，强制 inline"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
@@ -230,7 +272,7 @@ def stream_pdf_view(file_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/files/{file_id}/download-url", response_model=SignedUrlOut)
-def get_download_url_route(file_id: int, db: Session = Depends(get_db)):
+def get_download_url_route(file_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """获取下载用的 OSS 签名 URL（attachment）"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
@@ -239,7 +281,7 @@ def get_download_url_route(file_id: int, db: Session = Depends(get_db)):
 
 
 @app.patch("/api/files/{file_id}", response_model=PdfFileOut)
-def update_file(file_id: int, body: FileUpdateIn, db: Session = Depends(get_db)):
+def update_file(file_id: int, body: FileUpdateIn, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """更新文件（移动分组 + 重命名）"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:
@@ -265,7 +307,7 @@ def update_file(file_id: int, body: FileUpdateIn, db: Session = Depends(get_db))
 
 
 @app.delete("/api/files/{file_id}")
-def delete_pdf(file_id: int, db: Session = Depends(get_db)):
+def delete_pdf(file_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """删除 PDF = 先删 OSS + 再删 MySQL"""
     record = db.query(PdfFile).filter(PdfFile.id == file_id).first()
     if not record:

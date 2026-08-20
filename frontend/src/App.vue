@@ -1,30 +1,65 @@
 <template>
   <div class="app">
-    <header class="app-header">
-      <h1>📄 PDF 工具</h1>
-      <p class="subtitle">上传 · 分组 · 在线查看 · 下载</p>
-    </header>
+    <!-- 未登录 → 登录页 -->
+    <LoginView v-if="!currentUser" @logged-in="onLoggedIn" />
 
-    <main class="app-body">
-      <GroupSidebar ref="sidebarRef" @change="onGroupChange" @loaded="onGroupsLoaded" />
-      <div class="app-main">
-        <UploadPanel :groups="groups" :current-group="currentGroup" @uploaded="refresh" />
-        <PdfList ref="listRef" :group-id="currentGroup" @groups-updated="refreshGroups" />
-      </div>
-    </main>
+    <!-- 已登录 → 主界面 -->
+    <template v-else>
+      <header class="app-header">
+        <h1>📄 PDF 工具</h1>
+        <div class="user-bar">
+          <span class="user-name">{{ currentUser }}</span>
+          <button class="logout-btn" @click="onLogout">退出</button>
+        </div>
+      </header>
+
+      <main class="app-body">
+        <GroupSidebar ref="sidebarRef" @change="onGroupChange" @loaded="onGroupsLoaded" />
+        <div class="app-main">
+          <UploadPanel :groups="groups" :current-group="currentGroup" @uploaded="refresh" />
+          <PdfList ref="listRef" :group-id="currentGroup" @groups-updated="refreshGroups" />
+        </div>
+      </main>
+    </template>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import GroupSidebar from './components/GroupSidebar.vue'
-import UploadPanel from './components/UploadPanel.vue'
+import LoginView from './components/LoginView.vue'
 import PdfList from './components/PdfList.vue'
+import UploadPanel from './components/UploadPanel.vue'
+import { clearToken, getMe, getToken } from './api'
 
 const sidebarRef = ref(null)
 const listRef = ref(null)
 const currentGroup = ref(undefined)
 const groups = ref([])
+const currentUser = ref(null)
+
+// 启动时检查登录状态
+onMounted(async () => {
+  const token = getToken()
+  if (!token) return
+  try {
+    const user = await getMe()
+    currentUser.value = user.username
+  } catch {
+    clearToken()
+  }
+})
+
+function onLoggedIn(username) {
+  currentUser.value = username
+}
+
+function onLogout() {
+  clearToken()
+  currentUser.value = null
+  currentGroup.value = undefined
+  groups.value = []
+}
 
 function onGroupChange(groupId) {
   currentGroup.value = groupId
@@ -62,16 +97,35 @@ body {
   padding: 24px;
 }
 .app-header {
-  text-align: center;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 28px;
 }
 .app-header h1 {
   font-size: 28px;
   color: #2563eb;
 }
-.subtitle {
-  color: #6b7280;
-  margin-top: 4px;
+.user-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.user-name {
+  font-size: 14px;
+  color: #4b5563;
+}
+.logout-btn {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.logout-btn:hover {
+  background: #dc2626;
 }
 .app-body {
   display: flex;

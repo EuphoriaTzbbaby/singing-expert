@@ -83,3 +83,37 @@ class SignedUrlOut(BaseModel):
 
 class HealthOut(BaseModel):
     status: str
+
+
+# ==================== 认证 ====================
+
+
+class LoginIn(BaseModel):
+    """登录请求"""
+
+    username: str = Field(..., min_length=1, max_length=50)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class RegisterIn(BaseModel):
+    """注册请求"""
+
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6, max_length=128)
+
+
+class TokenOut(BaseModel):
+    """登录成功返回的 token"""
+
+    access_token: str
+    token_type: str = "bearer"
+    username: str
+
+
+class UserOut(BaseModel):
+    """用户信息"""
+
+    id: int
+    username: str
+
+    model_config = ConfigDict(from_attributes=True)

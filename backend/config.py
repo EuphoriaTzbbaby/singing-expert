@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # 上传限制
     max_pdf_size: int = 104_857_600  # 100MB
 
+    # JWT
+    jwt_secret: str = "singing-expert-secret-change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_hours: int = 24
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

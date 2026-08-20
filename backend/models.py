@@ -18,6 +18,19 @@ def _now_cst() -> datetime:
     return datetime.now(tz=CST)
 
 
+class User(Base):
+    """用户表（账号密码登录）"""
+
+    __tablename__ = "users"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False, comment="用户名")
+    password_hash = Column(String(255), nullable=False, comment="bcrypt 哈希后的密码")
+    created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+
+    __table_args__ = (Index("idx_user_username", "username"),)
+
+
 class AppConfig(Base):
     """
     通用 KV 配置表（和已有 MySQL 里的 `config` 表对齐）。
