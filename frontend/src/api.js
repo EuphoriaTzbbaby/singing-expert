@@ -122,4 +122,45 @@ export function deletePdf(id) {
   return api.delete(`/files/${id}`).then((r) => r.data)
 }
 
+// ==================== 管理端 ====================
+
+// 系统统计
+export function adminStats() {
+  return api.get('/admin/stats').then((r) => r.data)
+}
+
+// 列出所有用户（带文件数 + 存储大小）
+export function adminListUsers() {
+  return api.get('/admin/users').then((r) => r.data)
+}
+
+// 修改用户管理员标志
+export function adminSetAdmin(userId, { is_admin }) {
+  return api.patch(`/admin/users/${userId}/admin`, { is_admin }).then((r) => r.data)
+}
+
+// 重置用户密码
+export function adminResetPassword(userId, { new_password }) {
+  return api.post(`/admin/users/${userId}/reset-password`, { new_password }).then((r) => r.data)
+}
+
+// 删除用户（含 OSS 清理，返回 failed_oss_keys 列表）
+export function adminDeleteUser(userId) {
+  return api.delete(`/admin/users/${userId}`).then((r) => r.data)
+}
+
+// 列出所有文件（带 owner + group_name，可选过滤）
+export function adminListFiles(userId, groupId, keyword) {
+  const params = {}
+  if (userId !== undefined && userId !== null) params.user_id = userId
+  if (groupId !== undefined && groupId !== null) params.group_id = groupId
+  if (keyword) params.keyword = keyword
+  return api.get('/admin/files', { params }).then((r) => r.data)
+}
+
+// 列出所有分组（带 owner + 文件数）
+export function adminListGroups() {
+  return api.get('/admin/groups').then((r) => r.data)
+}
+
 export default api

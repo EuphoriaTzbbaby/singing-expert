@@ -57,3 +57,15 @@ def get_current_user(
             detail="用户不存在",
         )
     return user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """FastAPI 依赖：仅允许管理员访问，否则 403。
+    注意：不要给 get_current_user 加缓存，确保取消管理员后下一次请求立即生效。
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要管理员权限",
+        )
+    return current_user

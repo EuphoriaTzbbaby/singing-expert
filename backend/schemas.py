@@ -118,3 +118,104 @@ class UserOut(BaseModel):
     is_admin: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ==================== 管理端 ====================
+
+
+class UserAdminOut(BaseModel):
+    """管理员视角的用户列表项"""
+
+    id: int
+    username: str
+    is_admin: bool
+    created_at: datetime
+    file_count: int = 0
+    storage_bytes: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _ensure_tz(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=CST)
+        return v
+
+    @field_serializer("created_at")
+    def _ser_created(self, v: datetime) -> str:
+        return _serialize_cst(v)
+
+
+class PdfFileAdminOut(BaseModel):
+    """管理员视角的文件列表项（带 owner username + group name）"""
+
+    id: int
+    original_name: str
+    file_size: int
+    mime_type: str
+    created_at: datetime
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+    user_id: Optional[int] = None
+    owner_username: Optional[str] = None  # NULL=公共
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _ensure_tz(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=CST)
+        return v
+
+    @field_serializer("created_at")
+    def _ser_created(self, v: datetime) -> str:
+        return _serialize_cst(v)
+
+
+class GroupAdminOut(BaseModel):
+    """管理员视角的分组列表项"""
+
+    id: int
+    name: str
+    created_at: datetime
+    user_id: Optional[int] = None
+    owner_username: Optional[str] = None  # NULL=公共
+    file_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _ensure_tz(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=CST)
+        return v
+
+    @field_serializer("created_at")
+    def _ser_created(self, v: datetime) -> str:
+        return _serialize_cst(v)
+
+
+class StatsOut(BaseModel):
+    """系统总览统计"""
+
+    user_count: int
+    file_count: int
+    total_storage_bytes: int
+    group_count: int
+    public_file_count: int
+    recent_uploads: list[PdfFileAdminOut]
+
+
+class ResetPasswordIn(BaseModel):
+    """管理员重置用户密码请求"""
+
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+
+class SetAdminIn(BaseModel):
+    """修改管理员标志请求"""
+
+    is_admin: bool

@@ -45,7 +45,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { login, register } from '../api'
+import { getMe, login, register } from '../api'
 
 const emit = defineEmits(['logged-in'])
 
@@ -70,10 +70,10 @@ async function onSubmit() {
 
   loading.value = true
   try {
-    const data = isRegister.value
-      ? await register(u, p)
-      : await login(u, p)
-    emit('logged-in', data.username)
+    // 登录/注册成功后，再调一次 /api/auth/me 拿完整 user 对象（含 is_admin）
+    await (isRegister.value ? register(u, p) : login(u, p))
+    const me = await getMe()
+    emit('logged-in', me)
   } catch (err) {
     error.value = err?.response?.data?.detail || '操作失败，请重试'
   } finally {

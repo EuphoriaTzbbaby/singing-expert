@@ -8,12 +8,30 @@
       <header class="app-header">
         <h1>📄 PDF 工具</h1>
         <div class="user-bar">
-          <span class="user-name">{{ currentUser }}</span>
+          <span class="user-name">{{ currentUser.username }}</span>
+          <!-- 仅管理员可见：进入管理端 -->
+          <button
+            v-if="currentUser.is_admin && view === 'user'"
+            class="admin-btn"
+            @click="enterAdmin"
+          >管理端</button>
+          <!-- 管理端视图下：返回用户端 -->
+          <button
+            v-if="view === 'admin'"
+            class="back-btn"
+            @click="backToUser"
+          >← 返回用户端</button>
           <button class="logout-btn" @click="onLogout">退出</button>
         </div>
       </header>
 
-      <main class="app-body">
+      <!-- 管理端视图 -->
+      <main v-if="view === 'admin'" class="app-body">
+        <AdminView />
+      </main>
+
+      <!-- 用户端视图 -->
+      <main v-else class="app-body">
         <GroupSidebar ref="sidebarRef" @change="onGroupChange" @loaded="onGroupsLoaded" />
         <div class="app-main">
           <UploadPanel :groups="groups" :current-group="currentGroup" @uploaded="refresh" />
@@ -25,7 +43,8 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
+import AdminView from './components/AdminView.vue'
 import GroupSidebar from './components/GroupSidebar.vue'
 import LoginView from './components/LoginView.vue'
 import PdfList from './components/PdfList.vue'
@@ -36,7 +55,8 @@ const sidebarRef = ref(null)
 const listRef = ref(null)
 const currentGroup = ref(undefined)
 const groups = ref([])
-const currentUser = ref(null)
+const currentUser = ref(null) // { id, username, is_admin }
+const view = ref('user') // 'user' | 'admin'
 
 // 启动时检查登录状态
 onMounted(async () => {
@@ -44,21 +64,33 @@ onMounted(async () => {
   if (!token) return
   try {
     const user = await getMe()
-    currentUser.value = user.username
+    currentUser.value = user
   } catch {
     clearToken()
   }
 })
 
-function onLoggedIn(username) {
-  currentUser.value = username
+function onLoggedIn(user) {
+  currentUser.value = user
+  view.value = 'user'
 }
 
 function onLogout() {
   clearToken()
   currentUser.value = null
+  view.value = 'user'
   currentGroup.value = undefined
   groups.value = []
+}
+
+function enterAdmin() {
+  view.value = 'admin'
+}
+
+function backToUser() {
+  view.value = 'user'
+  // 管理员可能在管理端改了用户/文件/分组，返回时刷新用户端列表
+  nextTick(() => refresh())
 }
 
 function onGroupChange(groupId) {
@@ -114,6 +146,30 @@ body {
 .user-name {
   font-size: 14px;
   color: #4b5563;
+}
+.admin-btn {
+  background: #10b981;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.admin-btn:hover {
+  background: #059669;
+}
+.back-btn {
+  background: #6b7280;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.back-btn:hover {
+  background: #4b5563;
 }
 .logout-btn {
   background: #ef4444;

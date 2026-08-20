@@ -9,20 +9,32 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, or_, text
 from sqlalchemy.orm import Session
 
-from auth import create_access_token, get_current_user, hash_password, verify_password
+from auth import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_admin,
+    verify_password,
+)
 from config import settings
 from database import Base, engine, get_db
 from models import Group, PdfFile, User
 from schemas import (
     FileUpdateIn,
+    GroupAdminOut,
     GroupCreate,
     GroupOut,
     HealthOut,
     LoginIn,
+    PdfFileAdminOut,
     PdfFileOut,
     RegisterIn,
+    ResetPasswordIn,
+    SetAdminIn,
     SignedUrlOut,
+    StatsOut,
     TokenOut,
+    UserAdminOut,
     UserOut,
 )
 from storage import (
@@ -384,6 +396,224 @@ def delete_pdf(file_id: int, db: Session = Depends(get_db), current_user: User =
         raise HTTPException(status_code=500, detail=f"数据库记录删除失败: {e}")
 
     return {"ok": True, "id": file_id, "original_name": original_name, "deleted_oss_key": oss_key}
+
+
+# ==================== 管理端 ====================
+
+
+@app.get("/api/admin/stats", response_model=StatsOut)
+def admin_stats(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """系统总览统计：用户数、文件数、存储大小、分组数、公共文件数、最近 10 条上传"""
+    user_count = db.query(func.count(User.id)).scalar() or 0
+    file_count = db.query(func.count(PdfFile.id)).scalar() or 0
+    total_storage = db.query(func.coalesce(func.sum(PdfFile.file_size), 0)).scalar() or 0
+    group_count = db.query(func.count(Group.id)).scalar() or 0
+    public_file_count = (
+        db.query(func.count(PdfFile.id)).filter(PdfFile.user_id.is_(None)).scalar() or 0
+    )
+
+    recent_q = (
+        db.query(PdfFile, User.username.label("owner_username"), Group.name.label("group_name"))
+        .outerjoin(User, User.id == PdfFile.user_id)
+        .outerjoin(Group, Group.id == PdfFile.group_id)
+        .order_by(desc(PdfFile.created_at))
+        .limit(10)
+    )
+    recent = [
+        PdfFileAdminOut(
+            id=p.id,
+            original_name=p.original_name,
+            file_size=p.file_size,
+            mime_type=p.mime_type,
+            created_at=p.created_at,
+            group_id=p.group_id,
+            group_name=gname,
+            user_id=p.user_id,
+            owner_username=owner,
+        )
+        for p, owner, gname in recent_q.all()
+    ]
+    return StatsOut(
+        user_count=user_count,
+        file_count=file_count,
+        total_storage_bytes=total_storage,
+        group_count=group_count,
+        public_file_count=public_file_count,
+        recent_uploads=recent,
+    )
+
+
+@app.get("/api/admin/users", response_model=list[UserAdminOut])
+def admin_list_users(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """列出全部用户，带文件数 + 存储大小"""
+    rows = (
+        db.query(
+            User,
+            func.count(PdfFile.id).label("file_count"),
+            func.coalesce(func.sum(PdfFile.file_size), 0).label("storage_bytes"),
+        )
+        .outerjoin(PdfFile, PdfFile.user_id == User.id)
+        .group_by(User.id)
+        .order_by(desc(User.created_at))
+        .all()
+    )
+    return [
+        UserAdminOut(
+            id=u.id,
+            username=u.username,
+            is_admin=u.is_admin,
+            created_at=u.created_at,
+            file_count=fc or 0,
+            storage_bytes=sb or 0,
+        )
+        for u, fc, sb in rows
+    ]
+
+
+@app.patch("/api/admin/users/{user_id}/admin")
+def admin_set_admin(
+    user_id: int,
+    body: SetAdminIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """修改用户管理员标志。安全约束：不能改自己（防锁死）"""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能修改自己的管理员状态")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.is_admin = body.is_admin
+    db.commit()
+    return {"ok": True, "id": user_id, "is_admin": user.is_admin}
+
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+def admin_reset_password(
+    user_id: int,
+    body: ResetPasswordIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """管理员重置用户密码。安全约束：不能重置自己（用户改密应走另一套流程）"""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能重置自己的密码")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.password_hash = hash_password(body.new_password)
+    db.commit()
+    return {"ok": True, "id": user_id}
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """删除用户。安全约束：不能删自己。
+    流程：先循环删该用户所有 OSS 对象，再 db.delete(user)（CASCADE 带走 PdfFile/Group 行）。
+    OSS 删除失败不阻塞，返回 failed_oss_keys 供运维跟进。
+    """
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能删除自己")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    pdfs = db.query(PdfFile).filter(PdfFile.user_id == user_id).all()
+    failed_oss_keys = []
+    for p in pdfs:
+        try:
+            delete_from_oss(p.oss_key)
+        except Exception:  # noqa: BLE001
+            failed_oss_keys.append(p.oss_key)
+
+    db.delete(user)
+    db.commit()
+    return {"ok": True, "id": user_id, "failed_oss_keys": failed_oss_keys}
+
+
+@app.get("/api/admin/files", response_model=list[PdfFileAdminOut])
+def admin_list_files(
+    user_id: int | None = None,
+    group_id: int | None = None,
+    keyword: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """列出所有文件（带 owner username + group name）"""
+    q = (
+        db.query(
+            PdfFile,
+            User.username.label("owner_username"),
+            Group.name.label("group_name"),
+        )
+        .outerjoin(User, User.id == PdfFile.user_id)
+        .outerjoin(Group, Group.id == PdfFile.group_id)
+    )
+    if user_id is not None:
+        q = q.filter(PdfFile.user_id == user_id)
+    if group_id is not None:
+        if group_id == 0:
+            q = q.filter(PdfFile.group_id.is_(None))
+        else:
+            q = q.filter(PdfFile.group_id == group_id)
+    if keyword:
+        q = q.filter(PdfFile.original_name.ilike(f"%{keyword}%"))
+    q = q.order_by(desc(PdfFile.created_at))
+    return [
+        PdfFileAdminOut(
+            id=p.id,
+            original_name=p.original_name,
+            file_size=p.file_size,
+            mime_type=p.mime_type,
+            created_at=p.created_at,
+            group_id=p.group_id,
+            group_name=gname,
+            user_id=p.user_id,
+            owner_username=owner,
+        )
+        for p, owner, gname in q.all()
+    ]
+
+
+@app.get("/api/admin/groups", response_model=list[GroupAdminOut])
+def admin_list_groups(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """列出全部分组（带 owner username + 文件数）"""
+    rows = (
+        db.query(
+            Group,
+            User.username.label("owner_username"),
+            func.count(PdfFile.id).label("file_count"),
+        )
+        .outerjoin(User, User.id == Group.user_id)
+        .outerjoin(PdfFile, PdfFile.group_id == Group.id)
+        .group_by(Group.id)
+        .order_by(desc(Group.created_at))
+        .all()
+    )
+    return [
+        GroupAdminOut(
+            id=g.id,
+            name=g.name,
+            created_at=g.created_at,
+            user_id=g.user_id,
+            owner_username=owner,
+            file_count=fc or 0,
+        )
+        for g, owner, fc in rows
+    ]
 
 
 if __name__ == "__main__":
