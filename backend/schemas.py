@@ -259,3 +259,78 @@ class DeleteSelfIn(BaseModel):
     """用户注销账号请求（需输入当前密码确认）"""
 
     password: str = Field(..., min_length=1, max_length=128)
+
+
+# ==================== 词汇记忆 ====================
+
+VOCAB_CATEGORIES = ("单词", "短语", "句子", "其他")
+
+
+def _validate_category(v: str) -> str:
+    if v not in VOCAB_CATEGORIES:
+        raise ValueError(f"分类必须是 {'/'.join(VOCAB_CATEGORIES)}")
+    return v
+
+
+class VocabCreateIn(BaseModel):
+    """创建词汇卡片请求"""
+
+    front: str = Field(..., min_length=1, max_length=500)
+    back: str = Field(..., min_length=1, max_length=1000)
+    note: Optional[str] = Field(None, max_length=500)
+    category: str = Field("单词", max_length=20)
+
+    @field_validator("category")
+    @classmethod
+    def _check_category(cls, v):
+        return _validate_category(v)
+
+
+class VocabUpdateIn(BaseModel):
+    """更新词汇卡片请求"""
+
+    front: Optional[str] = Field(None, min_length=1, max_length=500)
+    back: Optional[str] = Field(None, min_length=1, max_length=1000)
+    note: Optional[str] = Field(None, max_length=500)
+    category: Optional[str] = Field(None, max_length=20)
+
+    @field_validator("category")
+    @classmethod
+    def _check_category(cls, v):
+        if v is None:
+            return v
+        return _validate_category(v)
+
+
+class VocabReviewIn(BaseModel):
+    """背诵评分请求：true=认识，false=不认识"""
+
+    known: bool
+
+
+class VocabOut(BaseModel):
+    """词汇卡片响应"""
+
+    id: int
+    front: str
+    back: str
+    note: Optional[str] = None
+    category: str = "单词"
+    box_level: int = 0
+    next_review_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("created_at", "next_review_at", mode="before")
+    @classmethod
+    def _ensure_tz(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=CST)
+        return v
+
+    @field_serializer("created_at", "next_review_at")
+    def _ser_created(self, v: Optional[datetime]) -> Optional[str]:
+        if v is None:
+            return None
+        return _serialize_cst(v)

@@ -178,4 +178,35 @@ export function adminListGroups() {
   return api.get('/admin/groups').then((r) => r.data)
 }
 
+// ==================== 词汇记忆 ====================
+
+// 列出当前用户的词汇卡片
+export function listVocab() {
+  return api.get('/vocab').then((r) => r.data)
+}
+
+// 新增词汇卡片
+export function createVocab({ front, back, note, category }) {
+  return api
+    .post('/vocab', { front, back, note: note || null, category })
+    .then((r) => r.data)
+}
+
+// 更新词汇卡片
+export function updateVocab(id, { front, back, note, category }) {
+  return api
+    .patch(`/vocab/${id}`, { front, back, note: note || null, category })
+    .then((r) => r.data)
+}
+
+// 背诵评分：known=true 认识（升盒），false 不认识（明天再见）
+export function reviewVocab(id, known) {
+  return api.post(`/vocab/${id}/review`, { known }).then((r) => r.data)
+}
+
+// 删除词汇卡片
+export function deleteVocab(id) {
+  return api.delete(`/vocab/${id}`).then((r) => r.data)
+}
+
 export default api

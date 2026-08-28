@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -18,7 +19,7 @@ from auth import (
 )
 from config import settings
 from database import Base, engine, get_db
-from models import Group, PdfFile, User
+from models import Group, PdfFile, User, VocabCard, _now_cst
 from schemas import (
     ChangePasswordIn,
     DeleteSelfIn,
@@ -39,6 +40,10 @@ from schemas import (
     TokenOut,
     UserAdminOut,
     UserOut,
+    VocabCreateIn,
+    VocabOut,
+    VocabReviewIn,
+    VocabUpdateIn,
 )
 from storage import (
     delete_from_oss,
@@ -78,6 +83,17 @@ async def lifespan(app: FastAPI):
         if not conn.execute(text("SHOW COLUMNS FROM `users` LIKE 'is_admin'")).fetchone():
             conn.execute(text("ALTER TABLE `users` ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
             print("[migrate] users +is_admin")
+
+        # vocab_cards 加 category / box_level / next_review_at
+        if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'category'")).fetchone():
+            conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN category VARCHAR(20) NOT NULL DEFAULT '单词'"))
+            print("[migrate] vocab_cards +category")
+        if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'box_level'")).fetchone():
+            conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN box_level INT NOT NULL DEFAULT 0"))
+            print("[migrate] vocab_cards +box_level")
+        if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'next_review_at'")).fetchone():
+            conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN next_review_at DATETIME NULL"))
+            print("[migrate] vocab_cards +next_review_at")
 
         conn.commit()
 
@@ -466,6 +482,126 @@ def delete_pdf(file_id: int, db: Session = Depends(get_db), current_user: User =
         raise HTTPException(status_code=500, detail=f"数据库记录删除失败: {e}")
 
     return {"ok": True, "id": file_id, "original_name": original_name, "deleted_oss_key": oss_key}
+
+
+# ==================== 词汇记忆 ====================
+
+
+@app.get("/api/vocab", response_model=list[VocabOut])
+def list_vocab(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """列出当前用户的词汇卡片（按创建时间倒序）"""
+    return (
+        db.query(VocabCard)
+        .filter(VocabCard.user_id == current_user.id)
+        .order_by(desc(VocabCard.created_at))
+        .all()
+    )
+
+
+@app.post("/api/vocab", response_model=VocabOut, status_code=201)
+def create_vocab(
+    body: VocabCreateIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """新增词汇卡片"""
+    front = body.front.strip()
+    back = body.back.strip()
+    if not front:
+        raise HTTPException(status_code=400, detail="正面内容不能为空")
+    if not back:
+        raise HTTPException(status_code=400, detail="背面内容不能为空")
+    record = VocabCard(
+        user_id=current_user.id,
+        front=front,
+        back=back,
+        note=(body.note or "").strip() or None,
+        category=body.category,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def _get_own_vocab(card_id: int, current_user: User, db: Session) -> VocabCard:
+    """获取当前用户自己的卡片，不存在/不是自己的则 404"""
+    record = (
+        db.query(VocabCard)
+        .filter(VocabCard.id == card_id, VocabCard.user_id == current_user.id)
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="卡片不存在")
+    return record
+
+
+@app.patch("/api/vocab/{card_id}", response_model=VocabOut)
+def update_vocab(
+    card_id: int,
+    body: VocabUpdateIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """更新词汇卡片（只能改自己的）"""
+    record = _get_own_vocab(card_id, current_user, db)
+    if body.front is not None:
+        front = body.front.strip()
+        if not front:
+            raise HTTPException(status_code=400, detail="正面内容不能为空")
+        record.front = front
+    if body.back is not None:
+        back = body.back.strip()
+        if not back:
+            raise HTTPException(status_code=400, detail="背面内容不能为空")
+        record.back = back
+    if body.note is not None:
+        record.note = body.note.strip() or None
+    if body.category is not None:
+        record.category = body.category
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+# 莱特纳盒子间隔（天）：答对升 1 级，按新等级取间隔
+REVIEW_INTERVALS_DAYS = {1: 1, 2: 2, 3: 4, 4: 7, 5: 15, 6: 30}
+MAX_BOX_LEVEL = 6
+
+
+@app.post("/api/vocab/{card_id}/review", response_model=VocabOut)
+def review_vocab(
+    card_id: int,
+    body: VocabReviewIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """背诵评分：认识→升盒（间隔拉长），不认识→回 0 级（明天再见）"""
+    record = _get_own_vocab(card_id, current_user, db)
+    now = _now_cst()
+    if body.known:
+        new_level = min(record.box_level + 1, MAX_BOX_LEVEL)
+        record.box_level = new_level
+        record.next_review_at = now + timedelta(days=REVIEW_INTERVALS_DAYS[new_level])
+    else:
+        record.box_level = 0
+        record.next_review_at = now + timedelta(days=1)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@app.delete("/api/vocab/{card_id}")
+def delete_vocab(
+    card_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """删除词汇卡片（只能删自己的）"""
+    record = _get_own_vocab(card_id, current_user, db)
+    db.delete(record)
+    db.commit()
+    return {"ok": True, "id": card_id}
 
 
 # ==================== 管理端 ====================

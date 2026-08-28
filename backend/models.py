@@ -84,3 +84,23 @@ class PdfFile(Base):
         Index("idx_pdf_group_id", "group_id"),
         Index("idx_pdf_user_id", "user_id"),
     )
+
+
+class VocabCard(Base):
+    """词汇记忆卡片（用户自己填写内容，仅本人可见可操作）"""
+
+    __tablename__ = "vocab_cards"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="所属用户ID")
+    front = Column(String(500), nullable=False, comment="正面：要记忆的内容（单词/短语/问题）")
+    back = Column(String(1000), nullable=False, comment="背面：答案/释义")
+    note = Column(String(500), nullable=True, comment="备注（可选，如音标/例句）")
+    category = Column(String(20), nullable=False, default="单词", comment="分类：单词/短语/句子/其他")
+    # 莱特纳盒子：0=新卡；每答对升 1 级，答错回 0 级
+    box_level = Column(Integer, nullable=False, default=0, comment="记忆盒等级 0~6（0=新卡）")
+    # 下次复习时间；NULL = 新卡（视为今日到期）
+    next_review_at = Column(DateTime(timezone=False), nullable=True, comment="下次复习时间")
+    created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+
+    __table_args__ = (Index("idx_vocab_user_id", "user_id"),)

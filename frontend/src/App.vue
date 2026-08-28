@@ -21,6 +21,12 @@
             class="account-btn"
             @click="enterAccount"
           >账号</button>
+          <!-- 所有登录用户可见：进入词汇记忆 -->
+          <button
+            v-if="view === 'user'"
+            class="vocab-btn"
+            @click="enterVocab"
+          >词汇记忆</button>
           <!-- 管理端/账号视图下：返回用户端 -->
           <button
             v-if="view !== 'user'"
@@ -39,6 +45,11 @@
       <!-- 账号视图 -->
       <main v-else-if="view === 'account'" class="app-body">
         <AccountView @logged-out="onLogout" />
+      </main>
+
+      <!-- 词汇记忆视图 -->
+      <main v-else-if="view === 'vocab'" class="app-body">
+        <VocabView />
       </main>
 
       <!-- 用户端视图 -->
@@ -61,6 +72,7 @@ import GroupSidebar from './components/GroupSidebar.vue'
 import LoginView from './components/LoginView.vue'
 import PdfList from './components/PdfList.vue'
 import UploadPanel from './components/UploadPanel.vue'
+import VocabView from './components/VocabView.vue'
 import { clearToken, getMe, getToken } from './api'
 
 const sidebarRef = ref(null)
@@ -68,7 +80,7 @@ const listRef = ref(null)
 const currentGroup = ref(undefined)
 const groups = ref([])
 const currentUser = ref(null) // { id, username, is_admin }
-const view = ref('user') // 'user' | 'admin' | 'account'
+const view = ref('user') // 'user' | 'admin' | 'account' | 'vocab'
 
 // 启动时检查登录状态
 onMounted(async () => {
@@ -101,6 +113,10 @@ function enterAdmin() {
 
 function enterAccount() {
   view.value = 'account'
+}
+
+function enterVocab() {
+  view.value = 'vocab'
 }
 
 function backToUser() {
@@ -186,6 +202,18 @@ body {
 }
 .account-btn:hover {
   background: #4f46e5;
+}
+.vocab-btn {
+  background: #8b5cf6;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.vocab-btn:hover {
+  background: #7c3aed;
 }
 .back-btn {
   background: #6b7280;
