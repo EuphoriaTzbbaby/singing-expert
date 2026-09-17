@@ -95,6 +95,14 @@ async def lifespan(app: FastAPI):
             conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN next_review_at DATETIME NULL"))
             print("[migrate] vocab_cards +next_review_at")
 
+        # vocab_cards 加 is_wrong / known_streak（错题本）
+        if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'is_wrong'")).fetchone():
+            conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN is_wrong BOOLEAN NOT NULL DEFAULT 0"))
+            print("[migrate] vocab_cards +is_wrong")
+        if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'known_streak'")).fetchone():
+            conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN known_streak INT NOT NULL DEFAULT 0"))
+            print("[migrate] vocab_cards +known_streak")
+
         conn.commit()
 
     # 2) 预热：从 config 表读一次 OSS 配置
@@ -567,6 +575,8 @@ def update_vocab(
 # 莱特纳盒子间隔（天）：答对升 1 级，按新等级取间隔
 REVIEW_INTERVALS_DAYS = {1: 1, 2: 2, 3: 4, 4: 7, 5: 15, 6: 30}
 MAX_BOX_LEVEL = 6
+# 错题本：连续答对 N 次自动移出错题本
+KNOWN_STREAK_TO_CLEAR = 2
 
 
 @app.post("/api/vocab/{card_id}/review", response_model=VocabOut)
@@ -576,16 +586,23 @@ def review_vocab(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """背诵评分：认识→升盒（间隔拉长），不认识→回 0 级（明天再见）"""
+    """背诵评分：认识→升盒（间隔拉长），不认识→回 0 级（明天再见）。
+    错题本联动：答错→进错题本；连续答对 KNOWN_STREAK_TO_CLEAR 次→自动移出。
+    """
     record = _get_own_vocab(card_id, current_user, db)
     now = _now_cst()
     if body.known:
         new_level = min(record.box_level + 1, MAX_BOX_LEVEL)
         record.box_level = new_level
         record.next_review_at = now + timedelta(days=REVIEW_INTERVALS_DAYS[new_level])
+        record.known_streak = (record.known_streak or 0) + 1
+        if record.known_streak >= KNOWN_STREAK_TO_CLEAR:
+            record.is_wrong = False
     else:
         record.box_level = 0
         record.next_review_at = now + timedelta(days=1)
+        record.is_wrong = True
+        record.known_streak = 0
     db.commit()
     db.refresh(record)
     return record

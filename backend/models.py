@@ -101,6 +101,9 @@ class VocabCard(Base):
     box_level = Column(Integer, nullable=False, default=0, comment="记忆盒等级 0~6（0=新卡）")
     # 下次复习时间；NULL = 新卡（视为今日到期）
     next_review_at = Column(DateTime(timezone=False), nullable=True, comment="下次复习时间")
+    # 错题本：答错自动进错题本；连续答对 2 次自动移出
+    is_wrong = Column(Boolean, nullable=False, default=False, comment="错题本标记（答错置位）")
+    known_streak = Column(Integer, nullable=False, default=0, comment="连续答对次数（达 2 移出错题本）")
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
 
     __table_args__ = (Index("idx_vocab_user_id", "user_id"),)
