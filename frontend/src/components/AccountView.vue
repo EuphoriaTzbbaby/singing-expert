@@ -4,7 +4,7 @@
     <div class="card">
       <h2>个人资料</h2>
       <button class="refresh-btn" @click="loadProfile" :disabled="profileLoading">
-        {{ profileLoading ? '加载中…' : '刷新' }}
+        {{ profileLoading ? '加载中…cww' : '刷新' }}
       </button>
       <p v-if="profileError" class="error">{{ profileError }}</p>
       <table v-if="profile" class="kv-table">
