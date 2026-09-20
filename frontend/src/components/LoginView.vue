@@ -45,9 +45,11 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { getMe, login, register } from '../api'
+import { setCachedUser } from '../router'
 
-const emit = defineEmits(['logged-in'])
+const router = useRouter()
 
 const isRegister = ref(false)
 const username = ref('')
@@ -73,7 +75,8 @@ async function onSubmit() {
     // 登录/注册成功后，再调一次 /api/auth/me 拿完整 user 对象（含 is_admin）
     await (isRegister.value ? register(u, p) : login(u, p))
     const me = await getMe()
-    emit('logged-in', me)
+    setCachedUser(me)
+    router.push('/')
   } catch (err) {
     error.value = err?.response?.data?.detail || '操作失败，请重试'
   } finally {

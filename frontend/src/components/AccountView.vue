@@ -95,9 +95,11 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { changePassword, deleteSelf, getProfile } from '../api'
+import { useRouter } from 'vue-router'
+import { changePassword, clearToken, deleteSelf, getProfile } from '../api'
+import { clearCachedUser } from '../router'
 
-const emit = defineEmits(['logged-out'])
+const router = useRouter()
 
 const profile = ref(null)
 const profileLoading = ref(false)
@@ -177,7 +179,9 @@ async function onDeleteSelf() {
     } else {
       window.alert('账号已注销，即将退出登录')
     }
-    emit('logged-out')
+    clearToken()
+    clearCachedUser()
+    router.push('/login')
   } catch (e) {
     deleteError.value = e?.response?.data?.detail || '注销失败'
   } finally {

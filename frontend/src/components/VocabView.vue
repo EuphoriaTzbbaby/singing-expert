@@ -155,6 +155,7 @@
             复习到期（{{ dueFiltered.length }}）
           </button>
           <button class="ghost-btn" @click="startAll" :disabled="!filtered.length">背全部</button>
+          <RouterLink to="/spell" class="ghost-btn spell-link">无限拼写测试 →</RouterLink>
           <label class="auto-speak">
             <input v-model="autoSpeak" type="checkbox" /> 自动发音
           </label>
