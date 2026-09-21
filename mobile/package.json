@@ -1,0 +1,22 @@
+{
+  "name": "singing-expert-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "把 singing-expert 包成安卓 App：Capacitor 壳 + 内置本地前端（已去掉 PDF 模块）",
+  "scripts": {
+    "web:install": "npm --prefix web install",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
+    "sync": "npm run web:build && npx cap sync android",
+    "apk:debug": "cd android && ./gradlew assembleDebug",
+    "open": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/core": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
+}

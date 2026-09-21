@@ -1,0 +1,16 @@
+{
+  "appId": "com.singingexpert.vocab",
+  "appName": "词汇记忆",
+  "webDir": "web/dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  安卓 9（API 28）起默认禁止明文 HTTP 流量。
+  后端目前跑在 http://47.101.42.177:8080（没有 HTTPS），
+  所以这里只对这一个 IP 单独放行明文，其余域名依旧禁止。
+
+  注意：等以后服务器配上域名 + HTTPS 之后，这一段就可以整段删掉。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">47.101.42.177</domain>
+    </domain-config>
+</network-security-config>

@@ -1,0 +1,176 @@
+/* ==========================================================================
+   Singing Expert · 手机端样式
+   --------------------------------------------------------------------------
+   只在 mobile/ 这份副本里生效，原 frontend/ 目录不受任何影响。
+
+   这里同时承担了原 App.vue 里那段全局样式（`* { box-sizing }` + body 字体）
+   的职责 —— 因为 App.vue 为了让位给底部标签栏，已经重写、不再带全局样式块。
+   ========================================================================== */
+
+/* ---------- 全局重置（沿用原 App.vue 的全局规则） ---------- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  background: #f5f7fa;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  background: #f5f7fa;
+  color: #1f2937;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- App 外壳 ---------- */
+.app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.app-header h1 {
+  font-size: 17px;
+  font-weight: 600;
+  color: #2563eb;
+}
+
+.app-header .user-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.app-header .user-name {
+  font-size: 13px;
+  color: #4b5563;
+  max-width: 32vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-header .logout-btn {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+/* 底部标签栏是 fixed 的，所以内容区要给它留出高度 */
+.app-body {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 12px calc(64px + env(safe-area-inset-bottom, 0px) + 20px);
+}
+
+/* ---------- 底部标签栏 ---------- */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  background: #fff;
+  border-top: 1px solid #e5e7eb;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.tabbar .tab {
+  flex: 1;
+  min-height: 52px;
+  background: transparent;
+  border: none;
+  border-top: 2px solid transparent;
+  margin-top: -1px;
+  padding: 8px 4px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #6b7280;
+}
+
+.tabbar .tab.active {
+  color: #2563eb;
+  border-top-color: #2563eb;
+  font-weight: 600;
+}
+
+/* ---------- 触控尺寸：手机上按钮别做太小 ---------- */
+button,
+.primary-btn,
+.ghost-btn,
+.success-btn,
+.danger-btn,
+.warn-btn {
+  min-height: 40px;
+  touch-action: manipulation;
+}
+
+button.tiny,
+.tiny,
+.ghost-btn.tiny,
+.danger-btn.tiny {
+  min-height: 32px;
+}
+
+input:not([type='radio']):not([type='checkbox']),
+select,
+textarea {
+  min-height: 42px;
+}
+
+/* ---------- 分页：一排 5 个按钮，窄屏会溢出 ---------- */
+.pager {
+  flex-wrap: wrap;
+}
+
+/* ---------- 复习模式判分：模式切换条允许换行 ---------- */
+.mode-switch {
+  flex-wrap: wrap;
+}
+
+/* ---------- 学习统计：7 根柱子别被压扁，不够宽就横向滚 ---------- */
+.stats-view .big-chart {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 6px;
+}
+
+.stats-view .big-chart > * {
+  min-width: 44px;
+}
+
+/* ---------- 管理端 ---------- */
+.admin-view .tabs {
+  flex-wrap: wrap;
+}
+
+/* 用户管理是宽表格，允许卡片内部横向滚动，避免整页被撑破 */
+.admin-view .card {
+  overflow-x: auto;
+}

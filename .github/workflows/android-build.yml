@@ -1,0 +1,79 @@
+name: Build Android APK
+
+# ============================================================================
+# 启用方式（二选一）：
+#
+#   1) 命令行：
+#        mkdir -p .github/workflows && cp mobile/ci/android-build.yml .github/workflows/
+#        git add .github/workflows/android-build.yml
+#        git commit -m "ci: 增加安卓 APK 云构建"
+#
+#   2) 或者直接在 GitHub 网页上新建文件，把本文件内容粘进去。
+#
+# 一旦启用：
+#   - 往 main 分支推送 mobile/ 下的任何改动，会自动开始构建；
+#   - 也可以在 GitHub 仓库的 Actions 页面点 "Run workflow" 手动触发。
+# 构建完成后，去该次运行的 Artifacts 里下载 vocab-memory-debug-apk.zip，
+# 解压得到 app-debug.apk，直接装到手机上即可（需要在手机上允许「安装未知来源应用」）。
+# ============================================================================
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-build.yml'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 Capacitor 依赖
+        working-directory: mobile
+        run: npm install --no-audit --no-fund
+
+      - name: 安装前端副本依赖
+        working-directory: mobile/web
+        run: npm install --no-audit --no-fund
+
+      - name: 构建前端
+        working-directory: mobile/web
+        run: npm run build
+
+      - name: 同步到安卓工程
+        working-directory: mobile
+        run: npx cap sync android
+
+      - name: 编译 Debug APK
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vocab-memory-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

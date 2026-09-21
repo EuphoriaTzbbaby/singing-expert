@@ -1,0 +1,20 @@
+# 依赖（各自 npm install 生成）
+node_modules/
+web/node_modules/
+
+# 前端构建产物（本地构建 / CI 会重新生成）
+web/dist/
+
+# 安卓工程里的生成物。
+# Capacitor 自带的 android/.gitignore 已经覆盖了大部分，这里再兜一遍，
+# 防止以后有人调整目录结构时漏掉。
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+
+.DS_Store
