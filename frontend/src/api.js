@@ -180,15 +180,39 @@ export function adminListGroups() {
 
 // ==================== 词汇记忆 ====================
 
-// 列出当前用户的词汇卡片
-export function listVocab() {
-  return api.get('/vocab').then((r) => r.data)
+// 学习统计仪表盘
+export function getVocabStats() {
+  return api.get('/vocab/stats').then((r) => r.data)
 }
 
-// 新增词汇卡片
-export function createVocab({ front, back, note, category }) {
+// 分页查询词汇卡片
+export function listVocab({ page = 1, pageSize = 10, keyword = '', category = '' } = {}) {
+  const params = new URLSearchParams()
+  params.append('page', String(page))
+  params.append('page_size', String(pageSize))
+  if (keyword) params.append('keyword', keyword)
+  if (category) params.append('category', category)
+  return api.get(`/vocab?${params.toString()}`).then((r) => r.data)
+}
+
+// 获取所有到期/新卡片（复习模式用）
+export function listVocabDue({ category = '' } = {}) {
+  const params = new URLSearchParams()
+  if (category) params.append('category', category)
+  const qs = params.toString()
+  return api.get(`/vocab/due${qs ? `?${qs}` : ''}`).then((r) => r.data)
+}
+
+// 新增词汇卡片。force=true 时即使正面重复也强制新增；否则冲突会抛异常
+export function createVocab({ front, back, note, category, forceCreate = false }) {
   return api
-    .post('/vocab', { front, back, note: note || null, category })
+    .post('/vocab', {
+      front,
+      back,
+      note: note || null,
+      category,
+      force_create: !!forceCreate,
+    })
     .then((r) => r.data)
 }
 
@@ -199,9 +223,15 @@ export function updateVocab(id, { front, back, note, category }) {
     .then((r) => r.data)
 }
 
-// 背诵评分：known=true 认识（升盒），false 不认识（明天再见）
-export function reviewVocab(id, known) {
-  return api.post(`/vocab/${id}/review`, { known }).then((r) => r.data)
+// 背诵评分
+// mode: 'flash' 翻卡 / 'type' 看释义拼写 / 'dictation' 听写
+export function reviewVocab(id, known, mode = 'flash') {
+  return api.post(`/vocab/${id}/review`, { known: !!known, mode }).then((r) => r.data)
+}
+
+// AI 生成助记（词根词缀+小故事+记忆技巧）
+export function generateAiMnemonic(id) {
+  return api.post(`/vocab/${id}/ai-mnemonic`).then((r) => r.data)
 }
 
 // 删除词汇卡片

@@ -61,3 +61,17 @@ def invalidate_oss_config() -> None:
     """清空缓存，下一次读取会重新查库（修改 config 表后调用）。"""
     global _oss_cache
     _oss_cache = None
+
+
+def get_config_value(key: str, default: Optional[str] = None) -> Optional[str]:
+    """从 config 表读取任意键值；读不到返回 default（默认 None）。"""
+    from database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        row = db.query(AppConfig).filter(AppConfig.configKey == key).first()
+        if row is None:
+            return default
+        return row.configValue if row.configValue is not None else default
+    finally:
+        db.close()

@@ -279,6 +279,7 @@ class VocabCreateIn(BaseModel):
     back: str = Field(..., min_length=1, max_length=1000)
     note: Optional[str] = Field(None, max_length=500)
     category: str = Field("单词", max_length=20)
+    force_create: bool = Field(False, description="true=即使正面已存在也强制新增，false=冲突时返回409")
 
     @field_validator("category")
     @classmethod
@@ -303,9 +304,10 @@ class VocabUpdateIn(BaseModel):
 
 
 class VocabReviewIn(BaseModel):
-    """背诵评分请求：true=认识，false=不认识"""
+    """背诵评分请求"""
 
     known: bool
+    mode: str = Field("flash", description="flash 翻卡 / type 看释义拼写 / dictation 听写")
 
 
 class VocabOut(BaseModel):
@@ -315,6 +317,7 @@ class VocabOut(BaseModel):
     front: str
     back: str
     note: Optional[str] = None
+    ai_mnemonic: Optional[str] = None
     category: str = "单词"
     box_level: int = 0
     next_review_at: Optional[datetime] = None
@@ -334,3 +337,33 @@ class VocabOut(BaseModel):
         if v is None:
             return None
         return _serialize_cst(v)
+
+
+class VocabPageOut(BaseModel):
+    """分页响应"""
+
+    total: int
+    page: int
+    page_size: int
+    items: list[VocabOut]
+
+
+class VocabStatsDaily(BaseModel):
+    date: str  # YYYY-MM-DD 北京时间
+    reviewed: int
+    correct: int
+
+
+class VocabStatsOut(BaseModel):
+    """学习数据统计仪表盘"""
+
+    # 今日概览
+    today_due: int
+    today_reviewed: int
+    today_correct: int
+    mastered: int
+    total_cards: int
+    streak_days: int
+    # 近 7 天（含今天，北京时间）
+    daily: list[VocabStatsDaily]
+    weekly_accuracy: float  # 0~1，无复习则 0

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import NonNegativeInt, PositiveInt
 from sqlalchemy import desc, func, or_, text
 from sqlalchemy.orm import Session
 
@@ -19,7 +20,7 @@ from auth import (
 )
 from config import settings
 from database import Base, engine, get_db
-from models import Group, PdfFile, User, VocabCard, _now_cst
+from models import Group, PdfFile, User, VocabCard, VocabReview, _now_cst
 from schemas import (
     ChangePasswordIn,
     DeleteSelfIn,
@@ -42,7 +43,9 @@ from schemas import (
     UserOut,
     VocabCreateIn,
     VocabOut,
+    VocabPageOut,
     VocabReviewIn,
+    VocabStatsOut,
     VocabUpdateIn,
 )
 from storage import (
@@ -94,6 +97,13 @@ async def lifespan(app: FastAPI):
         if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'next_review_at'")).fetchone():
             conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN next_review_at DATETIME NULL"))
             print("[migrate] vocab_cards +next_review_at")
+        # vocab_cards 加 last_reviewed_at / ai_mnemonic
+        if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'last_reviewed_at'")).fetchone():
+            conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN last_reviewed_at DATETIME NULL"))
+            print("[migrate] vocab_cards +last_reviewed_at")
+        if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'ai_mnemonic'")).fetchone():
+            conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN ai_mnemonic TEXT NULL"))
+            print("[migrate] vocab_cards +ai_mnemonic")
 
         conn.commit()
 
@@ -128,6 +138,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 
 def _validate_pdf(file: UploadFile) -> None:
@@ -487,15 +502,59 @@ def delete_pdf(file_id: int, db: Session = Depends(get_db), current_user: User =
 # ==================== 词汇记忆 ====================
 
 
-@app.get("/api/vocab", response_model=list[VocabOut])
-def list_vocab(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """列出当前用户的词汇卡片（按创建时间倒序）"""
-    return (
-        db.query(VocabCard)
-        .filter(VocabCard.user_id == current_user.id)
-        .order_by(desc(VocabCard.created_at))
+@app.get("/api/vocab", response_model=VocabPageOut)
+def list_vocab(
+    page: PositiveInt = 1,
+    page_size: PositiveInt = 10,
+    keyword: str = "",
+    category: str = "",
+    only_due: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """列出当前用户的词汇卡片（分页，按创建时间倒序，支持搜索/分类/仅到期过滤）"""
+    if page_size > 100:
+        page_size = 100
+    now = _now_cst()
+    q = db.query(VocabCard).filter(VocabCard.user_id == current_user.id)
+    if keyword:
+        kw = f"%{keyword.strip()}%"
+        q = q.filter(
+            or_(
+                VocabCard.front.like(kw),
+                VocabCard.back.like(kw),
+                func.coalesce(VocabCard.note, "").like(kw),
+            )
+        )
+    if category:
+        q = q.filter(VocabCard.category == category)
+    if only_due:
+        q = q.filter(or_(VocabCard.next_review_at.is_(None), VocabCard.next_review_at <= now))
+    total = q.count()
+    items = (
+        q.order_by(desc(VocabCard.created_at))
+        .limit(page_size)
+        .offset((page - 1) * page_size)
         .all()
     )
+    return VocabPageOut(total=total, page=page, page_size=page_size, items=items)
+
+
+@app.get("/api/vocab/due", response_model=list[VocabOut])
+def list_vocab_due(
+    category: str = "",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取所有到期/新卡片（不分页，供复习模式一次性拉取）"""
+    now = _now_cst()
+    q = db.query(VocabCard).filter(
+        VocabCard.user_id == current_user.id,
+        or_(VocabCard.next_review_at.is_(None), VocabCard.next_review_at <= now),
+    )
+    if category:
+        q = q.filter(VocabCard.category == category)
+    return q.order_by(desc(VocabCard.created_at)).all()
 
 
 @app.post("/api/vocab", response_model=VocabOut, status_code=201)
@@ -504,13 +563,40 @@ def create_vocab(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """新增词汇卡片"""
+    """新增词汇卡片。若正面已存在且 force_create=False，返回 409 附带已有卡片信息。"""
     front = body.front.strip()
     back = body.back.strip()
     if not front:
         raise HTTPException(status_code=400, detail="正面内容不能为空")
     if not back:
         raise HTTPException(status_code=400, detail="背面内容不能为空")
+
+    if not body.force_create:
+        existing = (
+            db.query(VocabCard)
+            .filter(
+                VocabCard.user_id == current_user.id,
+                VocabCard.front == front,
+            )
+            .order_by(desc(VocabCard.created_at))
+            .first()
+        )
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "正面内容已存在相同卡片",
+                    "existing": {
+                        "id": existing.id,
+                        "front": existing.front,
+                        "back": existing.back,
+                        "note": existing.note,
+                        "category": existing.category,
+                        "box_level": existing.box_level,
+                    },
+                },
+            )
+
     record = VocabCard(
         user_id=current_user.id,
         front=front,
@@ -576,7 +662,7 @@ def review_vocab(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """背诵评分：认识→升盒（间隔拉长），不认识→回 0 级（明天再见）"""
+    """背诵评分：认识→升盒（间隔拉长），不认识→回 0 级（明天再见），并写入复习日志。"""
     record = _get_own_vocab(card_id, current_user, db)
     now = _now_cst()
     if body.known:
@@ -586,9 +672,231 @@ def review_vocab(
     else:
         record.box_level = 0
         record.next_review_at = now + timedelta(days=1)
+    record.last_reviewed_at = now
+
+    # 写入复习日志
+    mode = body.mode if body.mode in ("flash", "type", "dictation") else "flash"
+    db.add(VocabReview(user_id=current_user.id, card_id=card_id, known=bool(body.known), mode=mode, reviewed_at=now))
+
     db.commit()
     db.refresh(record)
     return record
+
+
+def _beijing_date(d: datetime) -> str:
+    """把带时区/不带时区的时间转成北京时间 YYYY-MM-DD。"""
+    from datetime import timezone as tz
+    import zoneinfo  # Python 3.9+
+    bj = zoneinfo.ZoneInfo("Asia/Shanghai")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=tz.utc)
+    bj_time = d.astimezone(bj)
+    return bj_time.strftime("%Y-%m-%d")
+
+
+@app.get("/api/vocab/stats", response_model=VocabStatsOut)
+def get_vocab_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """学习统计仪表盘：今日待复习/已掌握/连续打卡/7天复习曲线/正确率。"""
+    now = _now_cst()
+    uid = current_user.id
+
+    # 总卡片 / 已掌握（box_level >= 4 → 至少 7 天记得）
+    total_q = db.query(VocabCard).filter(VocabCard.user_id == uid)
+    total_cards = total_q.count()
+    mastered = total_q.filter(VocabCard.box_level >= 4).count()
+
+    # 今日待复习
+    today_due = total_q.filter(
+        or_(VocabCard.next_review_at.is_(None), VocabCard.next_review_at <= now)
+    ).count()
+
+    # 近 7 天 北京时间日期数组（含今天，从 6 天前 → 今天）
+    import zoneinfo
+    from datetime import timezone as tz
+    bj = zoneinfo.ZoneInfo("Asia/Shanghai")
+    now_bj = now.astimezone(bj) if now.tzinfo else now.replace(tzinfo=tz.utc).astimezone(bj)
+    days = []
+    daily_rows = []
+    for i in range(6, -1, -1):
+        day_bj = now_bj.date() - timedelta(days=i)
+        days.append(day_bj.strftime("%Y-%m-%d"))
+        # reviewed_at（CST，无时区，等价 UTC+8）落在 [day 00:00, day+1 00:00)
+        day_start = datetime.combine(day_bj, datetime.min.time())
+        day_end = day_start + timedelta(days=1)
+        agg = (
+            db.query(
+                func.count(VocabReview.id).label("n"),
+                func.sum(func.if_(VocabReview.known, 1, 0)).label("c"),
+            )
+            .filter(
+                VocabReview.user_id == uid,
+                VocabReview.reviewed_at >= day_start,
+                VocabReview.reviewed_at < day_end,
+            )
+            .first()
+        )
+        reviewed = int(agg.n or 0)
+        correct = int(agg.c or 0)
+        daily_rows.append({"date": day_bj.strftime("%Y-%m-%d"), "reviewed": reviewed, "correct": correct})
+
+    today_reviewed = daily_rows[-1]["reviewed"]
+    today_correct = daily_rows[-1]["correct"]
+    # 近 7 日正确率
+    weekly_reviewed = sum(d["reviewed"] for d in daily_rows)
+    weekly_correct = sum(d["correct"] for d in daily_rows)
+    weekly_accuracy = (weekly_correct / weekly_reviewed) if weekly_reviewed else 0.0
+
+    # 连续打卡天数：从今天往前算，每天 reviewed>0 则 +1，遇 0 则中断；今天没复习则看昨天开始
+    streak = 0
+    # 从今天开始倒推
+    for d in reversed(range(7)):
+        r = daily_rows[d]["reviewed"]
+        if r > 0:
+            streak += 1
+        else:
+            # 如果是今天为 0，允许从昨天开始算；否则直接断
+            if d == 6:
+                continue
+            break
+    # 如果连续超过 7 天，继续往更久扫描
+    if streak >= 7 or (streak == 0 and False):
+        # 往更早再扫 60 天上限（避免过重）
+        probe_day = now_bj.date() - timedelta(days=7 if daily_rows[-1]["reviewed"] > 0 else 7)
+        # 仅当 7 天满才继续
+        if streak >= 7:
+            for _ in range(60):
+                probe_day = probe_day - timedelta(days=1)
+                day_start = datetime.combine(probe_day, datetime.min.time())
+                day_end = day_start + timedelta(days=1)
+                cnt = (
+                    db.query(func.count(VocabReview.id))
+                    .filter(
+                        VocabReview.user_id == uid,
+                        VocabReview.reviewed_at >= day_start,
+                        VocabReview.reviewed_at < day_end,
+                    )
+                    .scalar()
+                    or 0
+                )
+                if cnt > 0:
+                    streak += 1
+                else:
+                    break
+
+    return VocabStatsOut(
+        today_due=today_due,
+        today_reviewed=today_reviewed,
+        today_correct=today_correct,
+        mastered=mastered,
+        total_cards=total_cards,
+        streak_days=streak,
+        daily=daily_rows,
+        weekly_accuracy=round(weekly_accuracy, 4),
+    )
+
+
+@app.post("/api/vocab/{card_id}/ai-mnemonic", response_model=VocabOut)
+def ai_mnemonic(
+    card_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """调大模型生成：助记小故事 + 词根词缀拆解 + 记忆技巧。生成后写入卡片 ai_mnemonic。"""
+    import json
+
+    card = _get_own_vocab(card_id, current_user, db)
+
+    # 1. 找模型配置（沿用项目里现有方式：优先从 config 表取，兼容环境变量）
+    from app_config import get_config_value  # 复用 PDF 里的读 config 表工具
+
+    api_url = None
+    api_key = None
+    model = None
+    try:
+        api_url = (get_config_value("ai_api_url") or "").strip() or None
+        api_key = (get_config_value("ai_api_key") or "").strip() or None
+        model = (get_config_value("ai_model") or "").strip() or None
+    except Exception:
+        pass
+    if not api_url or not api_key:
+        # 回退：允许从环境变量（.env）里配
+        import os
+        api_url = api_url or os.getenv("AI_API_URL")
+        api_key = api_key or os.getenv("AI_API_KEY")
+        model = model or os.getenv("AI_MODEL") or "deepseek-chat"
+    if not api_url or not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="未配置 AI 模型，请先在数据库 config 表写入 ai_api_url / ai_api_key，或在 .env 配置。（推荐 DeepSeek：api_url=https://api.deepseek.com/v1/chat/completions）",
+        )
+
+    # 2. 组装提示词
+    card_cat = card.category or "其他"
+    system_prompt = (
+        "你是一个精通英语记忆法的辅导老师。用户给你一张卡片（正面/背面/分类/备注），"
+        "请你输出结构化的助记内容，包含 3 个必选模块，用 Markdown 分 3 段：\n"
+        "1. **词根词缀拆解**（若不是单词类，就分析短语结构或句子语法成分）\n"
+        "2. **助记小故事**（生动联想，2~4 句，方便记忆）\n"
+        "3. **记忆技巧**（1~3 条具体可操作的方法）\n"
+        "最后可选：若有和其它常见词的关联（同音、近义、反义、同根），再追加 1 段「4. 相关联想」。\n"
+        "回答必须为中文，简洁不啰嗦，只输出 Markdown 正文。"
+    )
+    user_prompt = (
+        f"卡片分类：{card_cat}\n"
+        f"正面：{card.front}\n"
+        f"背面（释义）：{card.back}\n"
+        f"备注：{card.note or '(无)'}\n"
+    )
+
+    # 3. 调模型（兼容 OpenAI 协议 / DeepSeek 协议）
+    import urllib.request
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.7,
+            "stream": False,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        api_url,
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI 接口调用失败: {e}")
+
+    # 兼容：choices[0].message.content / choices[0].delta.content
+    content = ""
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except Exception:
+        try:
+            content = data["choices"][0]["delta"]["content"]
+        except Exception:
+            raise HTTPException(status_code=502, detail="AI 返回格式无法解析")
+    content = (content or "").strip()
+    if not content:
+        raise HTTPException(status_code=502, detail="AI 返回空内容")
+
+    card.ai_mnemonic = content
+    db.commit()
+    db.refresh(card)
+    return card
 
 
 @app.delete("/api/vocab/{card_id}")

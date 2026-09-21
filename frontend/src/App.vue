@@ -27,6 +27,12 @@
             class="vocab-btn"
             @click="enterVocab"
           >词汇记忆</button>
+          <!-- 所有登录用户可见：进入学习统计 -->
+          <button
+            v-if="view === 'user'"
+            class="stats-btn"
+            @click="enterStats"
+          >学习统计</button>
           <!-- 管理端/账号视图下：返回用户端 -->
           <button
             v-if="view !== 'user'"
@@ -52,6 +58,11 @@
         <VocabView />
       </main>
 
+      <!-- 学习统计视图 -->
+      <main v-else-if="view === 'stats'" class="app-body">
+        <StatsView />
+      </main>
+
       <!-- 用户端视图 -->
       <main v-else class="app-body">
         <GroupSidebar ref="sidebarRef" @change="onGroupChange" @loaded="onGroupsLoaded" />
@@ -73,6 +84,7 @@ import LoginView from './components/LoginView.vue'
 import PdfList from './components/PdfList.vue'
 import UploadPanel from './components/UploadPanel.vue'
 import VocabView from './components/VocabView.vue'
+import StatsView from './components/StatsView.vue'
 import { clearToken, getMe, getToken } from './api'
 
 const sidebarRef = ref(null)
@@ -119,6 +131,10 @@ function enterVocab() {
   view.value = 'vocab'
 }
 
+function enterStats() {
+  view.value = 'stats'
+}
+
 function backToUser() {
   view.value = 'user'
   // 管理员可能在管理端/账号端改了用户/文件，返回时刷新用户端列表
@@ -154,6 +170,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   background: #f5f7fa;
   color: #1f2937;
+  overflow-x: hidden;
 }
 .app {
   max-width: 1200px;
@@ -214,6 +231,18 @@ body {
 }
 .vocab-btn:hover {
   background: #7c3aed;
+}
+.stats-btn {
+  background: #0ea5e9;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.stats-btn:hover {
+  background: #0284c7;
 }
 .back-btn {
   background: #6b7280;
