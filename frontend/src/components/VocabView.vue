@@ -441,14 +441,113 @@ function catClass(cat) {
 }
 
 // ==================== 语音朗读（Web Speech API） ====================
+//
+// 两个坑：
+//   1) Chromium 里同一个 tick 调 cancel() 紧跟 speak()，这句会被静默吞掉（点了没反应、也不报错）；
+//   2) 系统没装语音包 / 引擎被静音时，本地合成会"调用成功"但一点声音都没有。
+// 所以：cancel 之后隔一帧再读，并且 1 秒内没真正出声就自动切在线发音兜底。
+
+const YOUDAO_TTS = 'https://dict.youdao.com/dictvoice'
+const ttsAudioCache = new Map()
+let ttsCurrent = null
+let ttsSeq = 0
+
+function stopLocalTts() {
+  try {
+    const s = window.speechSynthesis
+    if (!s) return
+    s.cancel()
+    // Chrome 里 cancel() 之后引擎会停在 paused，不 resume 的话后续 speak 全哑
+    if (s.paused) s.resume()
+  } catch (e) {
+    // ignore
+  }
+}
+
+// 本地合成不可用 / 不出声时的兜底：有道在线发音（中英文都支持，mp3 几十 KB）
+function speakOnline(text) {
+  const zhOnly = !/[a-zA-Z]/.test(text) && /[\u4e00-\u9fff]/.test(text)
+  const url = zhOnly
+    ? `${YOUDAO_TTS}?le=zh&audio=${encodeURIComponent(text)}`
+    : `${YOUDAO_TTS}?type=2&audio=${encodeURIComponent(text)}`
+  try {
+    if (ttsCurrent) ttsCurrent.pause()
+    let audio = ttsAudioCache.get(text)
+    if (!audio) {
+      audio = new Audio(url)
+      audio.preload = 'auto'
+      audio.playbackRate = 0.9 // 与本地合成语速保持一致
+      ttsAudioCache.set(text, audio)
+      if (ttsAudioCache.size > 60) {
+        ttsAudioCache.delete(ttsAudioCache.keys().next().value)
+      }
+    } else {
+      try {
+        audio.currentTime = 0
+      } catch (e) {
+        // 元数据还没就绪时可能抛错，忽略即可
+      }
+    }
+    ttsCurrent = audio
+    const p = audio.play()
+    if (p && p.catch) p.catch(() => {})
+  } catch (e) {
+    // ignore
+  }
+}
 
 function speak(text) {
-  if (!text || !('speechSynthesis' in window)) return
-  const u = new SpeechSynthesisUtterance(text)
-  u.lang = /[\u4e00-\u9fff]/.test(text) ? 'zh-CN' : 'en-US'
-  u.rate = 0.9
-  window.speechSynthesis.cancel()
-  window.speechSynthesis.speak(u)
+  const t = text ? String(text).trim() : ''
+  if (!t) return
+  if (!('speechSynthesis' in window) || !window.SpeechSynthesisUtterance) {
+    // 没有本地合成能力 → 直接走在线发音
+    // （原来这里是静默 return，所以"点了没声音、也没有任何提示"）
+    speakOnline(t)
+    return
+  }
+
+  const seq = ++ttsSeq
+  let started = false
+  stopLocalTts()
+  try {
+    const u = new SpeechSynthesisUtterance(t)
+    u.lang = /[\u4e00-\u9fff]/.test(t) ? 'zh-CN' : 'en-US'
+    u.rate = 0.9
+    u.onstart = () => {
+      started = true
+    }
+    u.onerror = () => {
+      if (seq === ttsSeq && !started) {
+        stopLocalTts()
+        speakOnline(t)
+      }
+    }
+    // 隔一帧再读，绕开 cancel→speak 被吞掉的竞态
+    setTimeout(() => {
+      if (seq !== ttsSeq) return
+      try {
+        if (window.speechSynthesis.paused) window.speechSynthesis.resume()
+        window.speechSynthesis.speak(u)
+      } catch (e) {
+        speakOnline(t)
+        return
+      }
+      // 兜底：1 秒内没出声就切在线发音顶上，保证"点了就有声音"
+      setTimeout(() => {
+        if (seq === ttsSeq && !started) {
+          stopLocalTts()
+          speakOnline(t)
+        }
+      }, 1000)
+    }, 60)
+  } catch (e) {
+    speakOnline(t)
+  }
+}
+
+// 主动拉一次语音列表，催 Chrome 把语音加载出来（不主动调时首次点发音常常没声）
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  window.speechSynthesis.getVoices()
 }
 
 function autoSpeakCurrent() {
