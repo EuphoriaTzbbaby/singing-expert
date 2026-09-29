@@ -336,3 +336,57 @@ class VocabOut(BaseModel):
         if v is None:
             return None
         return _serialize_cst(v)
+
+
+class KnowledgeCardIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    content: str = Field("", max_length=50000)
+    related: list[str] = Field(default_factory=list, max_length=30)
+    notes: Optional[str] = Field(None, max_length=50000)
+
+    @field_validator("title")
+    @classmethod
+    def required_text(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("内容不能为空")
+        return value
+
+    @field_validator("tags", "related")
+    @classmethod
+    def clean_list(cls, values):
+        return list(dict.fromkeys(v.strip().lstrip("#") for v in values if v.strip()))
+
+
+class KnowledgeCardOut(BaseModel):
+    id: int
+    title: str
+    tags: list[str]
+    content: str
+    related: list[str]
+    notes: Optional[str] = None
+    image_url: Optional[str] = None
+    image_mime: Optional[str] = None
+    image_size: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    match_type: Optional[str] = None
+    score: Optional[float] = None
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def ensure_tz(cls, value):
+        return value.replace(tzinfo=CST) if isinstance(value, datetime) and value.tzinfo is None else value
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_date(self, value):
+        return _serialize_cst(value)
+
+
+class KnowledgeSearchOut(BaseModel):
+    keyword: str
+    exact_count: int
+    semantic_count: int
+    items: list[KnowledgeCardOut]

@@ -1,8 +1,12 @@
 <template>
   <div class="login-page">
+    <div class="login-orbit orbit-one"></div>
+    <div class="login-orbit orbit-two"></div>
     <div class="login-card">
-      <h1 class="login-title">📄 PDF 工具</h1>
-      <p class="login-subtitle">{{ isRegister ? '注册新账号' : '登录' }}</p>
+      <div class="brand-mark">C</div>
+      <p class="brand-name">cdwswb</p>
+      <h1 class="login-title">{{ isRegister ? '创建你的空间' : '欢迎回来' }}</h1>
+      <p class="login-subtitle">{{ isRegister ? '建立一个属于你的学习工作台' : '登录以继续你的知识之旅' }}</p>
 
       <form @submit.prevent="onSubmit">
         <div class="form-field">
@@ -87,28 +91,49 @@ async function onSubmit() {
 
 <style scoped>
 .login-page {
+  position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 80vh;
+  min-height: calc(100vh - 48px);
+  overflow: hidden;
+  background: radial-gradient(circle at 15% 15%, #e8edff 0, transparent 36%), #f5f5f7;
 }
 .login-card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 40px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  width: 360px;
+  position: relative;
+  z-index: 1;
+  background: rgba(255, 255, 255, .86);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, .8);
+  border-radius: 28px;
+  padding: 42px;
+  box-shadow: 0 24px 70px rgba(40, 45, 70, .12);
+  width: 410px;
   max-width: 90vw;
 }
+.brand-mark {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 12px;
+  border-radius: 14px;
+  background: #1d1d1f;
+  color: #fff;
+  font-size: 23px;
+  font-weight: 700;
+}
+.brand-name { text-align: center; letter-spacing: .2em; font-size: 11px; color: #6e6e73; margin-bottom: 30px; }
 .login-title {
-  font-size: 26px;
-  color: #2563eb;
+  font-size: 30px;
+  letter-spacing: -.04em;
+  color: #1d1d1f;
   text-align: center;
 }
 .login-subtitle {
-  color: #6b7280;
+  color: #6e6e73;
   text-align: center;
-  margin: 4px 0 24px;
+  margin: 8px 0 30px;
 }
 .form-field {
   margin-bottom: 16px;
@@ -121,14 +146,15 @@ async function onSubmit() {
 }
 .form-field input {
   width: 100%;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 10px 14px;
+  border: 1px solid #d2d2d7;
+  border-radius: 12px;
+  padding: 13px 14px;
   font-size: 14px;
   outline: none;
 }
 .form-field input:focus {
-  border-color: #2563eb;
+  border-color: #1d1d1f;
+  box-shadow: 0 0 0 3px rgba(29, 29, 31, .1);
 }
 .hint {
   font-size: 12px;
@@ -142,16 +168,16 @@ async function onSubmit() {
 }
 .submit-btn {
   width: 100%;
-  background: #2563eb;
+  background: #1d1d1f;
   color: #fff;
   border: none;
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 999px;
+  padding: 13px;
   font-size: 15px;
   cursor: pointer;
 }
 .submit-btn:hover:not(:disabled) {
-  background: #1d4ed8;
+  background: #424245;
 }
 .submit-btn:disabled {
   opacity: 0.6;
@@ -159,9 +185,13 @@ async function onSubmit() {
 }
 .toggle-text {
   text-align: center;
-  color: #2563eb;
+  color: #6e6e73;
   margin-top: 20px;
   cursor: pointer;
   font-size: 13px;
 }
+.toggle-text:hover { color: #1d1d1f; }
+.login-orbit { position: absolute; border-radius: 50%; filter: blur(2px); opacity: .55; }
+.orbit-one { width: 360px; height: 360px; background: #dbe3ff; top: -110px; left: -100px; }
+.orbit-two { width: 280px; height: 280px; background: #e8ddff; right: -70px; bottom: -90px; }
 </style>

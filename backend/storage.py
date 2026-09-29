@@ -48,6 +48,11 @@ def upload_bytes_to_oss(content: bytes, oss_key: str) -> None:
     bucket.put_object(oss_key, content, headers={"Content-Type": "application/pdf"})
 
 
+def upload_bytes_with_type(content: bytes, oss_key: str, mime_type: str) -> None:
+    """上传图片等非 PDF 对象，并保留正确的 Content-Type。"""
+    _get_bucket().put_object(oss_key, content, headers={"Content-Type": mime_type})
+
+
 def delete_from_oss(oss_key: str) -> None:
     """从 OSS 删除对象"""
     _get_bucket().delete_object(oss_key)

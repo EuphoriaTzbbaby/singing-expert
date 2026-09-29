@@ -209,4 +209,16 @@ export function deleteVocab(id) {
   return api.delete(`/vocab/${id}`).then((r) => r.data)
 }
 
+export function listKnowledge() { return api.get('/knowledge').then((r) => r.data) }
+export function searchKnowledge(keyword) { return api.get('/knowledge/search', { params: { keyword } }).then((r) => r.data) }
+export function createKnowledge(card) { return api.post('/knowledge', card).then((r) => r.data) }
+export function updateKnowledge(id, card) { return api.put(`/knowledge/${id}`, card).then((r) => r.data) }
+export function deleteKnowledge(id) { return api.delete(`/knowledge/${id}`).then((r) => r.data) }
+export function uploadKnowledgeImage(id, file, onUploadProgress) {
+  const form = new FormData()
+  form.append('image', file)
+  return api.post(`/knowledge/${id}/image`, form, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress }).then((r) => r.data)
+}
+export function deleteKnowledgeImage(id) { return api.delete(`/knowledge/${id}/image`).then((r) => r.data) }
+
 export default api

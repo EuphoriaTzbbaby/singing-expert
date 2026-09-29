@@ -54,6 +54,11 @@ const routes = [
   {
     path: '/',
     name: 'home',
+    component: () => import('../components/VocabView.vue'),
+  },
+  {
+    path: '/pdf',
+    name: 'pdf',
     component: () => import('../components/UserHome.vue'),
   },
   {
@@ -76,6 +81,11 @@ const routes = [
     path: '/spell',
     name: 'spell',
     component: () => import('../components/SpellView.vue'),
+  },
+  {
+    path: '/knowledge',
+    name: 'knowledge',
+    component: () => import('../components/KnowledgeView.vue'),
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

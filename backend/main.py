@@ -19,7 +19,7 @@ from auth import (
 )
 from config import settings
 from database import Base, engine, get_db
-from models import Group, PdfFile, User, VocabCard, _now_cst
+from models import Group, KnowledgeCard, PdfFile, User, VocabCard, _now_cst
 from schemas import (
     ChangePasswordIn,
     DeleteSelfIn,
@@ -44,7 +44,9 @@ from schemas import (
     VocabOut,
     VocabReviewIn,
     VocabUpdateIn,
+    KnowledgeCardIn, KnowledgeCardOut, KnowledgeSearchOut,
 )
+from knowledge_search import dump_list, load_list, semantic_score
 from storage import (
     delete_from_oss,
     gen_download_url,
@@ -52,6 +54,7 @@ from storage import (
     gen_view_url,
     get_object_stream,
     upload_bytes_to_oss,
+    upload_bytes_with_type,
 )
 
 
@@ -102,6 +105,15 @@ async def lifespan(app: FastAPI):
         if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'known_streak'")).fetchone():
             conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN known_streak INT NOT NULL DEFAULT 0"))
             print("[migrate] vocab_cards +known_streak")
+
+        for column, definition in (
+            ("image_oss_key", "VARCHAR(512) NULL"),
+            ("image_mime", "VARCHAR(100) NULL"),
+            ("image_size", "BIGINT NULL"),
+        ):
+            if not conn.execute(text(f"SHOW COLUMNS FROM `knowledge_cards` LIKE '{column}'")).fetchone():
+                conn.execute(text(f"ALTER TABLE `knowledge_cards` ADD COLUMN {column} {definition}"))
+                print(f"[migrate] knowledge_cards +{column}")
 
         conn.commit()
 
@@ -619,6 +631,117 @@ def delete_vocab(
     db.delete(record)
     db.commit()
     return {"ok": True, "id": card_id}
+
+
+# ==================== 个人知识库 ====================
+def _knowledge_out(card, match_type=None, score=None):
+    return KnowledgeCardOut(
+        id=card.id, title=card.title, tags=load_list(card.tags_json), content=card.content,
+        related=load_list(card.related_json), notes=card.notes, created_at=card.created_at,
+        updated_at=card.updated_at, image_mime=card.image_mime, image_size=card.image_size,
+        image_url=(gen_view_url(card.image_oss_key) if card.image_oss_key else None), match_type=match_type,
+        score=round(score, 4) if score is not None else None,
+    )
+
+def _own_knowledge(card_id, user, db):
+    card = db.query(KnowledgeCard).filter(KnowledgeCard.id == card_id, KnowledgeCard.user_id == user.id).first()
+    if not card:
+        raise HTTPException(status_code=404, detail="知识卡片不存在")
+    return card
+
+@app.get("/api/knowledge", response_model=list[KnowledgeCardOut])
+def list_knowledge(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    cards = db.query(KnowledgeCard).filter(KnowledgeCard.user_id == current_user.id).order_by(desc(KnowledgeCard.updated_at)).all()
+    return [_knowledge_out(card) for card in cards]
+
+@app.post("/api/knowledge", response_model=KnowledgeCardOut, status_code=201)
+def create_knowledge(body: KnowledgeCardIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if not body.content.strip() and not body.title.strip():
+        raise HTTPException(status_code=400, detail="标题不能为空")
+    card = KnowledgeCard(user_id=current_user.id, title=body.title, tags_json=dump_list(body.tags), content=body.content,
+                        related_json=dump_list(body.related), notes=(body.notes or "").strip() or None)
+    db.add(card); db.commit(); db.refresh(card)
+    return _knowledge_out(card)
+
+@app.put("/api/knowledge/{card_id}", response_model=KnowledgeCardOut)
+def update_knowledge(card_id: int, body: KnowledgeCardIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    card = _own_knowledge(card_id, current_user, db)
+    card.title, card.tags_json, card.content = body.title, dump_list(body.tags), body.content
+    card.related_json, card.notes, card.updated_at = dump_list(body.related), (body.notes or "").strip() or None, _now_cst()
+    db.commit(); db.refresh(card)
+    return _knowledge_out(card)
+
+@app.delete("/api/knowledge/{card_id}")
+def delete_knowledge(card_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    card = _own_knowledge(card_id, current_user, db)
+    if card.image_oss_key:
+        try:
+            delete_from_oss(card.image_oss_key)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"图片删除失败: {exc}")
+    db.delete(card); db.commit()
+    return {"ok": True, "id": card_id}
+
+
+@app.post("/api/knowledge/{card_id}/image", response_model=KnowledgeCardOut)
+async def upload_knowledge_image(
+    card_id: int,
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    card = _own_knowledge(card_id, current_user, db)
+    allowed = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+    if image.content_type not in allowed:
+        raise HTTPException(status_code=400, detail="只支持 PNG、JPG、GIF 或 WebP 图片")
+    content = await image.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="图片不能超过 10MB")
+    key = f"knowledge/{current_user.id}/{_now_cst().strftime('%Y/%m')}/{gen_oss_key(image.filename or 'image').split('/')[-1]}"
+    try:
+        upload_bytes_with_type(content, key, image.content_type)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"图片上传失败: {exc}")
+    if card.image_oss_key:
+        try:
+            delete_from_oss(card.image_oss_key)
+        except Exception:
+            pass
+    card.image_oss_key, card.image_mime, card.image_size, card.updated_at = key, image.content_type, len(content), _now_cst()
+    db.commit(); db.refresh(card)
+    return _knowledge_out(card)
+
+
+@app.delete("/api/knowledge/{card_id}/image", response_model=KnowledgeCardOut)
+def delete_knowledge_image(card_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    card = _own_knowledge(card_id, current_user, db)
+    if card.image_oss_key:
+        try:
+            delete_from_oss(card.image_oss_key)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"图片删除失败: {exc}")
+    card.image_oss_key = card.image_mime = card.image_size = None
+    card.updated_at = _now_cst(); db.commit(); db.refresh(card)
+    return _knowledge_out(card)
+
+@app.get("/api/knowledge/search", response_model=KnowledgeSearchOut)
+def search_knowledge(keyword: str, limit: int = 20, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    keyword = keyword.strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="请输入搜索关键词")
+    cards = db.query(KnowledgeCard).filter(KnowledgeCard.user_id == current_user.id).all()
+    exact, semantic = [], []
+    for card in cards:
+        tags, related = load_list(card.tags_json), load_list(card.related_json)
+        fields = [card.title, card.content, card.notes or "", *tags, *related]
+        if any(keyword.lower() in str(value).lower() for value in fields):
+            exact.append(_knowledge_out(card, "exact", 1.0)); continue
+        text_value = f"{card.title} {card.title} {' '.join(tags)} {card.content} {' '.join(related)} {card.notes or ''}"
+        score = semantic_score(keyword, text_value)
+        if score >= 0.08: semantic.append((score, card))
+    semantic.sort(key=lambda item: item[0], reverse=True)
+    items = exact + [_knowledge_out(card, "semantic", score) for score, card in semantic]
+    return KnowledgeSearchOut(keyword=keyword, exact_count=len(exact), semantic_count=len(semantic), items=items[:min(max(limit, 1), 50)])
 
 
 # ==================== 管理端 ====================

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
 
 from database import Base
 
@@ -107,3 +107,20 @@ class VocabCard(Base):
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
 
     __table_args__ = (Index("idx_vocab_user_id", "user_id"),)
+
+
+class KnowledgeCard(Base):
+    __tablename__ = "knowledge_cards"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(200), nullable=False)
+    tags_json = Column(Text, nullable=False, default="[]")
+    content = Column(Text, nullable=False)
+    related_json = Column(Text, nullable=False, default="[]")
+    notes = Column(Text, nullable=True)
+    image_oss_key = Column(String(512), nullable=True, comment="知识图片 OSS Key")
+    image_mime = Column(String(100), nullable=True, comment="知识图片 MIME 类型")
+    image_size = Column(BigInteger, nullable=True, comment="知识图片大小")
+    created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+    updated_at = Column(DateTime(timezone=False), default=_now_cst, onupdate=_now_cst, nullable=False)
+    __table_args__ = (Index("idx_knowledge_user_id", "user_id"), Index("idx_knowledge_user_title", "user_id", "title"))
