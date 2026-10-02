@@ -222,3 +222,9 @@ export function uploadKnowledgeImage(id, file, onUploadProgress) {
 export function deleteKnowledgeImage(id) { return api.delete(`/knowledge/${id}/image`).then((r) => r.data) }
 
 export default api
+export function listTimeRecords() { return api.get('/time-records').then(r => r.data) }
+export function createTimeRecord(record) { return api.post('/time-records', record).then(r => r.data) }
+export function listTimeTasks() { return api.get('/time-tasks').then(r => r.data) }
+export function createTimeTask(task) { return api.post('/time-tasks', task).then(r => r.data) }
+export function updateTimeTask(id, task) { return api.patch(`/time-tasks/${id}`, task).then(r => r.data) }
+export function deleteTimeTask(id) { return api.delete(`/time-tasks/${id}`).then(r => r.data) }

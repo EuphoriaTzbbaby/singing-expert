@@ -124,3 +124,25 @@ class KnowledgeCard(Base):
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
     updated_at = Column(DateTime(timezone=False), default=_now_cst, onupdate=_now_cst, nullable=False)
     __table_args__ = (Index("idx_knowledge_user_id", "user_id"), Index("idx_knowledge_user_title", "user_id", "title"))
+
+
+class TimeRecord(Base):
+    __tablename__ = "time_records"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    task_name = Column(String(100), nullable=False)
+    start_at = Column(DateTime(timezone=False), nullable=False)
+    end_at = Column(DateTime(timezone=False), nullable=False)
+    duration_seconds = Column(Integer, nullable=False)
+    reflection = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+
+
+class Task(Base):
+    __tablename__ = "time_tasks"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    icon = Column(String(10), default="＋", nullable=False)
+    color = Column(String(20), default="#6c63ff", nullable=False)
+    created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)

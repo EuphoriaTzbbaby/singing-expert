@@ -49,6 +49,12 @@
             class="nav-link knowledge-btn"
             active-class="active"
           >知识库</RouterLink>
+          <RouterLink
+            v-if="currentUser"
+            to="/focus"
+            class="nav-link focus-btn"
+            active-class="active"
+          >时间记录</RouterLink>
           <button class="logout-btn" @click="onLogout">退出</button>
         </div>
       </header>

@@ -19,7 +19,7 @@ from auth import (
 )
 from config import settings
 from database import Base, engine, get_db
-from models import Group, KnowledgeCard, PdfFile, User, VocabCard, _now_cst
+from models import Group, KnowledgeCard, PdfFile, User, VocabCard, TimeRecord, Task, _now_cst
 from schemas import (
     ChangePasswordIn,
     DeleteSelfIn,
@@ -44,7 +44,7 @@ from schemas import (
     VocabOut,
     VocabReviewIn,
     VocabUpdateIn,
-    KnowledgeCardIn, KnowledgeCardOut, KnowledgeSearchOut,
+    KnowledgeCardIn, KnowledgeCardOut, KnowledgeSearchOut, TimeRecordIn, TimeRecordOut, TaskIn, TaskOut,
 )
 from knowledge_search import dump_list, load_list, semantic_score
 from storage import (
@@ -506,6 +506,33 @@ def delete_pdf(file_id: int, db: Session = Depends(get_db), current_user: User =
 
 # ==================== 词汇记忆 ====================
 
+
+@app.get("/api/time-tasks", response_model=list[TaskOut])
+def list_tasks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return db.query(Task).filter(Task.user_id == user.id).order_by(Task.id).all()
+@app.post("/api/time-tasks", response_model=TaskOut, status_code=201)
+def create_task(body: TaskIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row=Task(user_id=user.id, **body.model_dump()); db.add(row); db.commit(); db.refresh(row); return row
+@app.patch("/api/time-tasks/{task_id}", response_model=TaskOut)
+def update_task(task_id:int, body:TaskIn, db:Session=Depends(get_db), user:User=Depends(get_current_user)):
+    row=db.query(Task).filter(Task.id==task_id,Task.user_id==user.id).first();
+    if not row: raise HTTPException(404, "事项不存在")
+    for k,v in body.model_dump().items(): setattr(row,k,v)
+    db.commit(); db.refresh(row); return row
+@app.delete("/api/time-tasks/{task_id}")
+def delete_task(task_id:int, db:Session=Depends(get_db), user:User=Depends(get_current_user)):
+    row=db.query(Task).filter(Task.id==task_id,Task.user_id==user.id).first();
+    if not row: raise HTTPException(404, "事项不存在")
+    db.delete(row); db.commit(); return {"ok":True}
+
+@app.get("/api/time-records", response_model=list[TimeRecordOut])
+def list_time_records(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return db.query(TimeRecord).filter(TimeRecord.user_id == user.id).order_by(desc(TimeRecord.start_at)).all()
+
+@app.post("/api/time-records", response_model=TimeRecordOut, status_code=201)
+def create_time_record(body: TimeRecordIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = TimeRecord(user_id=user.id, **body.model_dump())
+    db.add(row); db.commit(); db.refresh(row); return row
 
 @app.get("/api/vocab", response_model=list[VocabOut])
 def list_vocab(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

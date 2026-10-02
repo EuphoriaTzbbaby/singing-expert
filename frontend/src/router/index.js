@@ -87,6 +87,11 @@ const routes = [
     name: 'knowledge',
     component: () => import('../components/KnowledgeView.vue'),
   },
+  {
+    path: '/focus',
+    name: 'focus',
+    component: () => import('../components/FocusView.vue'),
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

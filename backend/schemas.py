@@ -390,3 +390,26 @@ class KnowledgeSearchOut(BaseModel):
     exact_count: int
     semantic_count: int
     items: list[KnowledgeCardOut]
+
+
+class TimeRecordIn(BaseModel):
+    task_name: str = Field(..., min_length=1, max_length=100)
+    start_at: datetime
+    end_at: datetime
+    duration_seconds: int = Field(..., ge=1)
+    reflection: Optional[str] = Field(None, max_length=5000)
+
+class TimeRecordOut(TimeRecordIn):
+    id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    icon: str = "＋"
+    color: str = "#6c63ff"
+class TaskOut(TaskIn):
+    id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
