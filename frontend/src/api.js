@@ -226,6 +226,10 @@ export function listTimeRecords() { return api.get('/time-records').then(r => r.
 export function createTimeRecord(record) { return api.post('/time-records', record).then(r => r.data) }
 export function updateTimeRecord(id, record) { return api.patch(`/time-records/${id}`, record).then(r => r.data) }
 export function deleteTimeRecord(id) { return api.delete(`/time-records/${id}`).then(r => r.data) }
+export function listDiary(keyword = '') { return api.get('/diary', { params: keyword ? { keyword } : {} }).then(r => r.data) }
+export function createDiary(entry) { return api.post('/diary', entry).then(r => r.data) }
+export function updateDiary(id, entry) { return api.patch(`/diary/${id}`, entry).then(r => r.data) }
+export function deleteDiary(id) { return api.delete(`/diary/${id}`).then(r => r.data) }
 export function listTimeTasks() { return api.get('/time-tasks').then(r => r.data) }
 export function createTimeTask(task) { return api.post('/time-tasks', task).then(r => r.data) }
 export function updateTimeTask(id, task) { return api.patch(`/time-tasks/${id}`, task).then(r => r.data) }

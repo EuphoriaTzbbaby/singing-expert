@@ -146,3 +146,15 @@ class Task(Base):
     icon = Column(String(10), default="＋", nullable=False)
     color = Column(String(20), default="#6c63ff", nullable=False)
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+
+class DiaryEntry(Base):
+    __tablename__ = "diary_entries"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)
+    mood = Column(String(20), default="平静", nullable=False)
+    tags = Column(Text, nullable=True)
+    diary_date = Column(DateTime(timezone=False), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
+    updated_at = Column(DateTime(timezone=False), default=_now_cst, onupdate=_now_cst, nullable=False)

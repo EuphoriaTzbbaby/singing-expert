@@ -19,7 +19,7 @@ from auth import (
 )
 from config import settings
 from database import Base, engine, get_db
-from models import Group, KnowledgeCard, PdfFile, User, VocabCard, TimeRecord, Task, _now_cst
+from models import Group, KnowledgeCard, PdfFile, User, VocabCard, TimeRecord, Task, DiaryEntry, _now_cst
 
 def _cst_wall_clock(value: datetime) -> datetime:
     """Store Beijing wall-clock time in MySQL DATETIME (which has no timezone)."""
@@ -50,7 +50,7 @@ from schemas import (
     VocabOut,
     VocabReviewIn,
     VocabUpdateIn,
-    KnowledgeCardIn, KnowledgeCardOut, KnowledgeSearchOut, TimeRecordIn, TimeRecordOut, TaskIn, TaskOut,
+    KnowledgeCardIn, KnowledgeCardOut, KnowledgeSearchOut, TimeRecordIn, TimeRecordOut, TaskIn, TaskOut, DiaryEntryIn, DiaryEntryOut,
 )
 from knowledge_search import dump_list, load_list, semantic_score
 from storage import (
@@ -557,6 +557,32 @@ def update_time_record(record_id: int, body: TimeRecordIn, db: Session = Depends
 def delete_time_record(record_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     row = db.query(TimeRecord).filter(TimeRecord.id == record_id, TimeRecord.user_id == user.id).first()
     if not row: raise HTTPException(404, "时间记录不存在")
+    db.delete(row); db.commit(); return {"ok": True}
+
+@app.get("/api/diary", response_model=list[DiaryEntryOut])
+def list_diary(keyword: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    q = db.query(DiaryEntry).filter(DiaryEntry.user_id == user.id)
+    if keyword:
+        q = q.filter(or_(DiaryEntry.title.ilike(f"%{keyword}%"), DiaryEntry.content.ilike(f"%{keyword}%"), DiaryEntry.tags.ilike(f"%{keyword}%")))
+    return q.order_by(desc(DiaryEntry.diary_date), desc(DiaryEntry.id)).all()
+
+@app.post("/api/diary", response_model=DiaryEntryOut, status_code=201)
+def create_diary(body: DiaryEntryIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    data = body.model_dump(); data["diary_date"] = _cst_wall_clock(data["diary_date"])
+    row = DiaryEntry(user_id=user.id, **data); db.add(row); db.commit(); db.refresh(row); return row
+
+@app.patch("/api/diary/{entry_id}", response_model=DiaryEntryOut)
+def update_diary(entry_id: int, body: DiaryEntryIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(DiaryEntry).filter(DiaryEntry.id == entry_id, DiaryEntry.user_id == user.id).first()
+    if not row: raise HTTPException(404, "日记不存在")
+    data = body.model_dump(); data["diary_date"] = _cst_wall_clock(data["diary_date"])
+    for key, value in data.items(): setattr(row, key, value)
+    row.updated_at = _now_cst(); db.commit(); db.refresh(row); return row
+
+@app.delete("/api/diary/{entry_id}")
+def delete_diary(entry_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(DiaryEntry).filter(DiaryEntry.id == entry_id, DiaryEntry.user_id == user.id).first()
+    if not row: raise HTTPException(404, "日记不存在")
     db.delete(row); db.commit(); return {"ok": True}
 
 @app.get("/api/vocab", response_model=list[VocabOut])

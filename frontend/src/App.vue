@@ -48,7 +48,7 @@
             to="/knowledge"
             class="nav-link knowledge-btn"
             active-class="active"
-          >知识库</RouterLink>
+          >备忘录</RouterLink>
           <RouterLink
             v-if="currentUser"
             to="/focus"

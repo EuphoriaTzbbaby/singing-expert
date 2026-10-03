@@ -413,3 +413,16 @@ class TaskOut(TaskIn):
     id: int
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+class DiaryEntryIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field(..., min_length=1, max_length=50000)
+    mood: str = Field("平静", max_length=20)
+    tags: Optional[str] = Field(None, max_length=1000)
+    diary_date: datetime
+
+class DiaryEntryOut(DiaryEntryIn):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
