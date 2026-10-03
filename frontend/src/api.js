@@ -224,6 +224,8 @@ export function deleteKnowledgeImage(id) { return api.delete(`/knowledge/${id}/i
 export default api
 export function listTimeRecords() { return api.get('/time-records').then(r => r.data) }
 export function createTimeRecord(record) { return api.post('/time-records', record).then(r => r.data) }
+export function updateTimeRecord(id, record) { return api.patch(`/time-records/${id}`, record).then(r => r.data) }
+export function deleteTimeRecord(id) { return api.delete(`/time-records/${id}`).then(r => r.data) }
 export function listTimeTasks() { return api.get('/time-tasks').then(r => r.data) }
 export function createTimeTask(task) { return api.post('/time-tasks', task).then(r => r.data) }
 export function updateTimeTask(id, task) { return api.patch(`/time-tasks/${id}`, task).then(r => r.data) }

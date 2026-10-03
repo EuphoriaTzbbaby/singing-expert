@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -20,6 +20,12 @@ from auth import (
 from config import settings
 from database import Base, engine, get_db
 from models import Group, KnowledgeCard, PdfFile, User, VocabCard, TimeRecord, Task, _now_cst
+
+def _cst_wall_clock(value: datetime) -> datetime:
+    """Store Beijing wall-clock time in MySQL DATETIME (which has no timezone)."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
 from schemas import (
     ChangePasswordIn,
     DeleteSelfIn,
@@ -531,8 +537,27 @@ def list_time_records(db: Session = Depends(get_db), user: User = Depends(get_cu
 
 @app.post("/api/time-records", response_model=TimeRecordOut, status_code=201)
 def create_time_record(body: TimeRecordIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    row = TimeRecord(user_id=user.id, **body.model_dump())
+    data = body.model_dump()
+    data["start_at"] = _cst_wall_clock(data["start_at"])
+    data["end_at"] = _cst_wall_clock(data["end_at"])
+    row = TimeRecord(user_id=user.id, **data)
     db.add(row); db.commit(); db.refresh(row); return row
+
+@app.patch("/api/time-records/{record_id}", response_model=TimeRecordOut)
+def update_time_record(record_id: int, body: TimeRecordIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(TimeRecord).filter(TimeRecord.id == record_id, TimeRecord.user_id == user.id).first()
+    if not row: raise HTTPException(404, "时间记录不存在")
+    data = body.model_dump()
+    data["start_at"] = _cst_wall_clock(data["start_at"])
+    data["end_at"] = _cst_wall_clock(data["end_at"])
+    for key, value in data.items(): setattr(row, key, value)
+    db.commit(); db.refresh(row); return row
+
+@app.delete("/api/time-records/{record_id}")
+def delete_time_record(record_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    row = db.query(TimeRecord).filter(TimeRecord.id == record_id, TimeRecord.user_id == user.id).first()
+    if not row: raise HTTPException(404, "时间记录不存在")
+    db.delete(row); db.commit(); return {"ok": True}
 
 @app.get("/api/vocab", response_model=list[VocabOut])
 def list_vocab(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
