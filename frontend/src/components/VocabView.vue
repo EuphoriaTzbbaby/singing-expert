@@ -230,7 +230,7 @@
         <p v-if="!filtered.length" class="empty">
           {{ keyword || activeCat !== '全部' ? '当前筛选下没有卡片' : '还没有卡片，先在上面添加一张吧' }}
         </p>
-        <div v-for="card in filtered" :key="card.id" class="vocab-item">
+        <div v-for="card in paginatedCards" :key="card.id" class="vocab-item">
           <!-- 编辑态 -->
           <template v-if="editingId === card.id">
             <div class="edit-form">
@@ -246,11 +246,11 @@
               <div class="form-row">
                 <div class="form-field">
                   <label>正面</label>
-                  <textarea v-model="editForm.front" rows="2"></textarea>
+                  <textarea v-model="editForm.front" rows="4"></textarea>
                 </div>
                 <div class="form-field">
                   <label>背面</label>
-                  <textarea v-model="editForm.back" rows="2"></textarea>
+                  <textarea v-model="editForm.back" rows="4"></textarea>
                 </div>
               </div>
               <div class="form-field">
@@ -270,10 +270,7 @@
               <div class="item-row">
                 <div class="item-front">
                   <div class="item-label">正面</div>
-                  <div class="item-text">
-                    {{ card.front }}
-                    <button class="speak-btn tiny" title="朗读" @click="speak(card.front)">🔊</button>
-                  </div>
+                  <div class="item-text">{{ card.front }} <button class="speak-btn tiny" title="朗读" @click="speak(card.front)">🔊</button></div>
                 </div>
                 <div class="item-back">
                   <div class="item-label">背面</div>
@@ -294,9 +291,12 @@
             </div>
           </template>
         </div>
+        <div v-if="pageCount > 1" class="pagination"><button class="page-btn" :disabled="page===1" @click="page--">‹</button><button v-for="n in pageCount" :key="n" class="page-btn" :class="{active:n===page}" @click="page=n">{{ n }}</button><button class="page-btn" :disabled="page===pageCount" @click="page++">›</button><span class="page-total">共 {{ filtered.length }} 张</span></div>
       </div>
     </template>
   </section>
+  <div v-if="notice" class="vocab-overlay" @click.self="notice=''"><div class="vocab-dialog"><span class="dialog-icon">✦</span><h3>{{ noticeTitle }}</h3><p>{{ notice }}</p><button class="primary-btn" @click="notice=''">知道了</button></div></div>
+  <div v-if="confirmCard" class="vocab-overlay" @click.self="confirmCard=null"><div class="vocab-dialog"><span class="dialog-icon danger-icon">!</span><h3>删除这张卡片？</h3><p>“{{ truncate(confirmCard.front, 24) }}” 将被永久删除。</p><div class="dialog-actions"><button class="ghost-btn" @click="confirmCard=null">取消</button><button class="danger-btn" @click="confirmDelete">确认删除</button></div></div></div>
 </template>
 
 <script setup>
@@ -323,6 +323,8 @@ const PLACEHOLDERS = {
 const cards = ref([])
 const listError = ref('')
 const keyword = ref('')
+const page = ref(1)
+const pageSize = 20
 
 // 分类筛选（'全部' 或具体分类名）
 const activeCat = ref('全部')
@@ -344,6 +346,10 @@ const adding = ref(false)
 const editingId = ref(null)
 const editForm = ref({ front: '', back: '', note: '', category: '单词' })
 const saving = ref(false)
+const markdownPreview = ref(false)
+const notice = ref('')
+const noticeTitle = ref('提示')
+const confirmCard = ref(null)
 
 // 背诵模式状态
 const reviewing = ref(false)
@@ -390,6 +396,10 @@ const filtered = computed(() => {
       c.category.includes(kw)
   )
 })
+const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
+const paginatedCards = computed(() => filtered.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+watch([keyword, activeCat], () => { page.value = 1 })
+watch(pageCount, (n) => { if (page.value > n) page.value = n })
 
 function isDue(card) {
   return !card.next_review_at || new Date(card.next_review_at).getTime() <= Date.now()
@@ -591,6 +601,7 @@ async function onAdd() {
 }
 
 function startEdit(card) {
+  markdownPreview.value = false
   editingId.value = card.id
   editForm.value = {
     front: card.front,
@@ -598,6 +609,15 @@ function startEdit(card) {
     note: card.note || '',
     category: card.category || '单词',
   }
+}
+
+function renderMarkdown(value) {
+  let s = String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+  s = s.replace(/^### (.+)$/gm, '<h5>$1</h5>').replace(/^## (.+)$/gm, '<h4>$1</h4>').replace(/^# (.+)$/gm, '<h3>$1</h3>')
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  s = s.replace(/^[-*] (.+)$/gm, '<li>$1</li>').replace(/(?:<li>.*<\/li>\n?)+/g, m => `<ul>${m}</ul>`)
+  return s.replace(/\n/g, '<br>')
 }
 
 function cancelEdit() {
@@ -611,19 +631,24 @@ async function onSaveEdit() {
     editingId.value = null
     await load()
   } catch (e) {
-    window.alert(e?.response?.data?.detail || '保存失败')
+    noticeTitle.value = '保存失败'; notice.value = e?.response?.data?.detail || '保存失败'
   } finally {
     saving.value = false
   }
 }
 
 async function onDelete(card) {
-  if (!window.confirm(`确定删除卡片「${truncate(card.front, 20)}」吗？`)) return
+  confirmCard.value = card
+}
+async function confirmDelete() {
+  const card = confirmCard.value
+  confirmCard.value = null
+  if (!card) return
   try {
     await deleteVocab(card.id)
     await load()
   } catch (e) {
-    window.alert(e?.response?.data?.detail || '删除失败')
+    noticeTitle.value = '删除失败'; notice.value = e?.response?.data?.detail || '删除失败'
   }
 }
 
@@ -661,13 +686,13 @@ function startReview(list) {
   if (reviewMode.value === 'spell') {
     arr = arr.filter((c) => SPELL_CATS.includes(c.category))
     if (!arr.length) {
-      window.alert('拼写模式只支持「单词 / 短语」卡片，当前筛选下没有可背的')
+      noticeTitle.value = '暂时无法开始'; notice.value = '拼写模式只支持「单词 / 短语」卡片，当前筛选下没有可背的'
       return
     }
   }
   if (!arr.length) return
   if (reviewMode.value === 'choice' && cards.value.length < 2) {
-    window.alert('选择题模式至少需要 2 张卡片才能生成干扰项')
+    noticeTitle.value = '卡片数量不足'; notice.value = '选择题模式至少需要 2 张卡片才能生成干扰项'
     return
   }
   queue.value = shuffle(arr)
@@ -1466,4 +1491,4 @@ onMounted(load)
 .spell-input:focus {
   border-color: #8b5cf6;
 }
-</style>
+ .vocab-overlay{position:fixed;inset:0;z-index:90;display:grid;place-items:center;background:#15172d66;backdrop-filter:blur(9px)}.vocab-dialog{width:min(380px,calc(100vw - 32px));padding:30px;border-radius:24px;background:#fff;text-align:center;box-shadow:0 24px 80px #17192f3d}.dialog-icon{display:grid;place-items:center;width:44px;height:44px;margin:0 auto 14px;border-radius:14px;background:#eeeaff;color:#6657d9;font-size:22px}.danger-icon{background:#fff0f2;color:#e54861}.vocab-dialog h3{font-size:20px;margin-bottom:8px}.vocab-dialog p{color:#777c8a;line-height:1.6;font-size:13px;margin-bottom:22px}.dialog-actions{display:flex;justify-content:center;gap:10px}.dialog-actions button{min-width:92px}.vocab-view select,.vocab-view input[type=checkbox]{accent-color:#6657d9}.vocab-view select{appearance:none;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%236657d9' stroke-width='1.6'/%3E%3C/svg%3E") no-repeat right 12px center;padding-right:34px}.markdown-live{display:grid;grid-template-columns:1fr;gap:8px;padding:12px;border:1px solid #e3e3ed;border-radius:12px;background:#fff;position:relative}.markdown-toggle{display:flex;justify-content:flex-end;gap:3px;margin:-2px 0 6px}.markdown-toggle button{font-size:11px;padding:4px 8px;border-radius:6px}.markdown-live textarea{width:100%;resize:vertical}.markdown-toggle{display:flex;gap:5px;margin:8px 0}.markdown-toggle button{border:1px solid #e3e3ed;background:#fafafd;color:#777b88;border-radius:8px;padding:6px 12px;cursor:pointer}.markdown-toggle button.active{background:#6657d9;color:#fff;border-color:#6657d9}.markdown-preview{min-height:52px;max-height:180px;overflow:auto;padding:10px 12px;border:1px solid #e1e2ea;border-radius:10px;background:#fafaff;color:#343847;line-height:1.6}.markdown-body{line-height:1.65}.markdown-body h3,.markdown-body h4,.markdown-body h5{margin:3px 0 5px}.markdown-body ul{padding-left:20px;margin:4px 0}.markdown-body code{padding:2px 5px;border-radius:5px;background:#f0eff7;color:#5d51d8}.markdown-body a,.markdown-preview a{color:#5d51d8;text-decoration:underline}.pagination{display:flex;justify-content:center;align-items:center;gap:6px;margin-top:20px;padding-top:16px;border-top:1px solid #eee}.page-btn{min-width:32px;height:32px;border:1px solid #e2e2eb;background:#fff;border-radius:9px;color:#686c79;cursor:pointer}.page-btn:hover:not(:disabled),.page-btn.active{background:#6657d9;border-color:#6657d9;color:#fff}.page-btn:disabled{opacity:.35;cursor:not-allowed}.page-total{margin-left:8px;color:#999;font-size:12px}</style>
