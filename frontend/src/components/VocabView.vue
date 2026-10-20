@@ -107,7 +107,7 @@
       <div class="card stats-card">
         <div class="stats-numbers">
           <div class="stat-block">
-            <div class="stat-num">{{ catCards.length }}</div>
+            <div class="stat-num">{{ total }}</div>
             <div class="stat-label">总卡片</div>
           </div>
           <div class="stat-block">
@@ -148,13 +148,15 @@
               {{ m.label }}
             </button>
           </div>
-          <button v-if="wrongInCat.length" class="wrong-btn" @click="startWrong">
-            错题本（{{ wrongInCat.length }}）
+          <button v-if="wrongCount" class="wrong-btn" :disabled="loadingReview" @click="startWrong">
+            错题本（{{ wrongCount }}）
           </button>
-          <button class="review-btn" @click="startDue" :disabled="!dueFiltered.length">
-            复习到期（{{ dueFiltered.length }}）
+          <button class="review-btn" @click="startDue" :disabled="!dueInCat || loadingReview">
+            复习到期（{{ dueInCat }}）
           </button>
-          <button class="ghost-btn" @click="startAll" :disabled="!filtered.length">背全部</button>
+          <button class="ghost-btn" @click="startAll" :disabled="!total || loadingReview">
+            {{ loadingReview ? '加载中…' : '背全部' }}
+          </button>
           <RouterLink to="/spell" class="ghost-btn spell-link">无限拼写测试 →</RouterLink>
           <label class="auto-speak">
             <input v-model="autoSpeak" type="checkbox" /> 自动发音
@@ -225,9 +227,9 @@
 
       <!-- 卡片列表 -->
       <div class="card">
-        <h2>我的卡片（{{ filtered.length }}）</h2>
+        <h2>我的卡片（{{ total }}）</h2>
         <p v-if="listError" class="error">{{ listError }}</p>
-        <p v-if="!filtered.length" class="empty">
+        <p v-if="!total" class="empty">
           {{ keyword || activeCat !== '全部' ? '当前筛选下没有卡片' : '还没有卡片，先在上面添加一张吧' }}
         </p>
         <div v-for="card in paginatedCards" :key="card.id" class="vocab-item">
@@ -291,7 +293,7 @@
             </div>
           </template>
         </div>
-        <div v-if="pageCount > 1" class="pagination"><button class="page-btn" :disabled="page===1" @click="page--">‹</button><button v-for="n in pageCount" :key="n" class="page-btn" :class="{active:n===page}" @click="page=n">{{ n }}</button><button class="page-btn" :disabled="page===pageCount" @click="page++">›</button><span class="page-total">共 {{ filtered.length }} 张</span></div>
+        <div v-if="pageCount > 1" class="pagination"><button class="page-btn" :disabled="page===1" @click="page--">‹</button><button v-for="n in visiblePages" :key="n" class="page-btn" :class="{active:n===page}" @click="page=n">{{ n }}</button><button class="page-btn" :disabled="page===pageCount" @click="page++">›</button><span class="page-total">共 {{ total }} 张</span></div>
       </div>
     </template>
   </section>
@@ -301,7 +303,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { createVocab, deleteVocab, listVocab, reviewVocab, updateVocab } from '../api'
+import { createVocab, deleteVocab, listVocab, listVocabPage, reviewVocab, updateVocab } from '../api'
 
 const CATEGORIES = ['单词', '短语', '句子', '其他']
 // 拼写模式只针对「单词/短语」
@@ -325,6 +327,18 @@ const listError = ref('')
 const keyword = ref('')
 const page = ref(1)
 const pageSize = 20
+const pageCount = ref(1)
+const loadingReview = ref(false)
+const reviewPool = ref([])
+const reviewDirty = ref(false)
+const stats = ref({
+  total: 0,
+  due: 0,
+  wrong: 0,
+  mastered: 0,
+  category_counts: {},
+  box_counts: Array(7).fill(0),
+})
 
 // 分类筛选（'全部' 或具体分类名）
 const activeCat = ref('全部')
@@ -377,51 +391,22 @@ const current = computed(() => queue.value[reviewIdx.value] || null)
 
 // ==================== 筛选 / 统计 ====================
 
-// 当前分类下的卡片（统计口径）
-const catCards = computed(() =>
-  activeCat.value === '全部'
-    ? cards.value
-    : cards.value.filter((c) => c.category === activeCat.value)
-)
-
-// 关键字搜索叠加在分类筛选之上
-const filtered = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return catCards.value
-  return catCards.value.filter(
-    (c) =>
-      c.front.toLowerCase().includes(kw) ||
-      c.back.toLowerCase().includes(kw) ||
-      (c.note || '').toLowerCase().includes(kw) ||
-      c.category.includes(kw)
-  )
+const total = computed(() => stats.value.total)
+const paginatedCards = computed(() => cards.value)
+const visiblePages = computed(() => {
+  const start = Math.max(1, Math.min(page.value - 3, pageCount.value - 6))
+  const end = Math.min(pageCount.value, start + 6)
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index)
 })
-const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
-const paginatedCards = computed(() => filtered.value.slice((page.value - 1) * pageSize, page.value * pageSize))
-watch([keyword, activeCat], () => { page.value = 1 })
-watch(pageCount, (n) => { if (page.value > n) page.value = n })
 
 function isDue(card) {
   return !card.next_review_at || new Date(card.next_review_at).getTime() <= Date.now()
 }
 
-// 到期 = 新卡（从未复习）或 next_review_at <= 现在；复习队列跟随筛选
-const dueFiltered = computed(() => filtered.value.filter(isDue))
-const dueInCat = computed(() => catCards.value.filter(isDue).length)
-
-// 错题本（跟随分类筛选）
-const wrongInCat = computed(() => catCards.value.filter((c) => c.is_wrong))
-const wrongCount = computed(() => catCards.value.filter((c) => c.is_wrong).length)
-
-// 已掌握 = 顶盒（第 6 盒）
-const masteredCount = computed(() => catCards.value.filter((c) => c.box_level >= 6).length)
-
-// 各盒分布 [0..6]
-const boxDist = computed(() => {
-  const dist = Array(7).fill(0)
-  catCards.value.forEach((c) => dist[Math.min(c.box_level, 6)]++)
-  return dist
-})
+const dueInCat = computed(() => stats.value.due)
+const wrongCount = computed(() => stats.value.wrong)
+const masteredCount = computed(() => stats.value.mastered)
+const boxDist = computed(() => stats.value.box_counts)
 const boxMax = computed(() => Math.max(1, ...boxDist.value))
 
 function barHeight(n) {
@@ -430,10 +415,13 @@ function barHeight(n) {
 }
 
 const chipCats = computed(() => [
-  { name: '全部', count: cards.value.length },
+  {
+    name: '全部',
+    count: CATEGORIES.reduce((sum, category) => sum + (stats.value.category_counts[category] || 0), 0),
+  },
   ...CATEGORIES.map((c) => ({
     name: c,
-    count: cards.value.filter((x) => x.category === c).length,
+    count: stats.value.category_counts[c] || 0,
   })),
 ])
 
@@ -566,14 +554,40 @@ function autoSpeakCurrent() {
 
 // ==================== CRUD ====================
 
+let loadSequence = 0
+let keywordTimer = null
+
 async function load() {
+  const sequence = ++loadSequence
   listError.value = ''
   try {
-    cards.value = await listVocab()
+    const result = await listVocabPage({
+      page: page.value,
+      pageSize,
+      category: activeCat.value,
+      keyword: keyword.value,
+    })
+    if (sequence !== loadSequence) return
+    cards.value = result.items
+    stats.value = result.stats
+    pageCount.value = result.pages
+    if (page.value !== result.page) page.value = result.page
   } catch (e) {
+    if (sequence !== loadSequence) return
     listError.value = e?.response?.data?.detail || '加载失败'
   }
 }
+
+watch(page, load)
+watch(activeCat, () => {
+  if (page.value === 1) load()
+  else page.value = 1
+})
+watch(keyword, () => {
+  page.value = 1
+  window.clearTimeout(keywordTimer)
+  keywordTimer = window.setTimeout(load, 250)
+})
 
 async function onAdd() {
   formError.value = ''
@@ -592,7 +606,8 @@ async function onAdd() {
     newFront.value = ''
     newBack.value = ''
     newNote.value = ''
-    await load()
+    if (page.value === 1) await load()
+    else page.value = 1
   } catch (e) {
     formError.value = e?.response?.data?.detail || '添加失败'
   } finally {
@@ -690,8 +705,11 @@ function startReview(list) {
       return
     }
   }
-  if (!arr.length) return
-  if (reviewMode.value === 'choice' && cards.value.length < 2) {
+  if (!arr.length) {
+    noticeTitle.value = '暂时无法开始'; notice.value = '当前筛选下没有可背的卡片'
+    return
+  }
+  if (reviewMode.value === 'choice' && reviewPool.value.length < 2) {
     noticeTitle.value = '卡片数量不足'; notice.value = '选择题模式至少需要 2 张卡片才能生成干扰项'
     return
   }
@@ -699,24 +717,49 @@ function startReview(list) {
   reviewIdx.value = 0
   roundKnown.value = 0
   roundWrong.value = 0
+  reviewDirty.value = false
   reviewing.value = true
   resetCardState()
 }
 
-function startDue() {
-  startReview(dueFiltered.value)
+async function loadReviewPool() {
+  loadingReview.value = true
+  try {
+    const pool = await listVocab({
+      category: activeCat.value,
+      keyword: keyword.value,
+    })
+    reviewPool.value = pool
+    return pool
+  } catch (e) {
+    noticeTitle.value = '加载失败'; notice.value = e?.response?.data?.detail || '复习队列加载失败'
+    return null
+  } finally {
+    loadingReview.value = false
+  }
 }
 
-function startAll() {
-  startReview(filtered.value)
+async function startDue() {
+  const pool = await loadReviewPool()
+  if (pool) startReview(pool.filter(isDue))
 }
 
-function startWrong() {
-  startReview(wrongInCat.value)
+async function startAll() {
+  const pool = await loadReviewPool()
+  if (pool) startReview(pool)
 }
 
-function endReview() {
+async function startWrong() {
+  const pool = await loadReviewPool()
+  if (pool) startReview(pool.filter((card) => card.is_wrong))
+}
+
+async function endReview() {
   reviewing.value = false
+  if (reviewDirty.value) {
+    reviewDirty.value = false
+    await load()
+  }
 }
 
 // ==================== 选择题 ====================
@@ -724,7 +767,7 @@ function endReview() {
 function buildOptions() {
   const card = current.value
   if (!card) return
-  const pool = cards.value.filter((c) => c.id !== card.id && c.back !== card.back)
+  const pool = reviewPool.value.filter((c) => c.id !== card.id && c.back !== card.back)
   const sameCat = shuffle(pool.filter((c) => c.category === card.category))
   const others = shuffle(pool.filter((c) => c.category !== card.category))
   const distractors = []
@@ -796,10 +839,16 @@ async function grade(known) {
   if (grading.value) return
   grading.value = true
   const card = queue.value[reviewIdx.value]
-  if (known) roundKnown.value++
-  else roundWrong.value++
   try {
-    await reviewVocab(card.id, known)
+    const updated = await reviewVocab(card.id, known)
+    if (known) roundKnown.value++
+    else roundWrong.value++
+    queue.value[reviewIdx.value] = updated
+    const poolIndex = reviewPool.value.findIndex((item) => item.id === updated.id)
+    if (poolIndex >= 0) reviewPool.value[poolIndex] = updated
+    const pageIndex = cards.value.findIndex((item) => item.id === updated.id)
+    if (pageIndex >= 0) cards.value[pageIndex] = updated
+    reviewDirty.value = true
     if (reviewIdx.value < queue.value.length - 1) {
       reviewIdx.value++
       resetCardState()
@@ -808,8 +857,9 @@ async function grade(known) {
       window.alert(
         `这轮背完啦：认识 ${roundKnown.value} · 不认识 ${roundWrong.value}，明天继续 💪`
       )
+      reviewDirty.value = false
+      await load()
     }
-    await load()
   } catch (e) {
     window.alert(e?.response?.data?.detail || '评分失败')
   } finally {

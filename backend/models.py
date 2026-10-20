@@ -106,7 +106,13 @@ class VocabCard(Base):
     known_streak = Column(Integer, nullable=False, default=0, comment="连续答对次数（达 2 移出错题本）")
     created_at = Column(DateTime(timezone=False), default=_now_cst, nullable=False)
 
-    __table_args__ = (Index("idx_vocab_user_id", "user_id"),)
+    __table_args__ = (
+        Index("idx_vocab_user_id", "user_id"),
+        Index("idx_vocab_user_created", "user_id", "created_at"),
+        Index("idx_vocab_user_category_created", "user_id", "category", "created_at"),
+        Index("idx_vocab_user_review", "user_id", "next_review_at"),
+        Index("idx_vocab_user_wrong", "user_id", "is_wrong"),
+    )
 
 
 class KnowledgeCard(Base):

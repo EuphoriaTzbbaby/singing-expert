@@ -4,10 +4,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import desc, func, or_, text
+from sqlalchemy import case, desc, func, or_, text
 from sqlalchemy.orm import Session
 
 from auth import (
@@ -48,8 +48,10 @@ from schemas import (
     UserOut,
     VocabCreateIn,
     VocabOut,
+    VocabPageOut,
     VocabReviewIn,
     VocabUpdateIn,
+    VOCAB_CATEGORIES,
     KnowledgeCardIn, KnowledgeCardOut, KnowledgeSearchOut, TimeRecordIn, TimeRecordOut, TaskIn, TaskOut, DiaryEntryIn, DiaryEntryOut,
 )
 from knowledge_search import dump_list, load_list, semantic_score
@@ -111,6 +113,21 @@ async def lifespan(app: FastAPI):
         if not conn.execute(text("SHOW COLUMNS FROM `vocab_cards` LIKE 'known_streak'")).fetchone():
             conn.execute(text("ALTER TABLE `vocab_cards` ADD COLUMN known_streak INT NOT NULL DEFAULT 0"))
             print("[migrate] vocab_cards +known_streak")
+
+        # 词汇页面的分页、分类、到期和错题查询索引
+        vocab_indexes = {
+            row[2]
+            for row in conn.execute(text("SHOW INDEX FROM `vocab_cards`")).fetchall()
+        }
+        for index_name, columns in (
+            ("idx_vocab_user_created", "user_id, created_at"),
+            ("idx_vocab_user_category_created", "user_id, category, created_at"),
+            ("idx_vocab_user_review", "user_id, next_review_at"),
+            ("idx_vocab_user_wrong", "user_id, is_wrong"),
+        ):
+            if index_name not in vocab_indexes:
+                conn.execute(text(f"ALTER TABLE `vocab_cards` ADD INDEX `{index_name}` ({columns})"))
+                print(f"[migrate] vocab_cards +index {index_name}")
 
         for column, definition in (
             ("image_oss_key", "VARCHAR(512) NULL"),
@@ -585,15 +602,122 @@ def delete_diary(entry_id: int, db: Session = Depends(get_db), user: User = Depe
     if not row: raise HTTPException(404, "日记不存在")
     db.delete(row); db.commit(); return {"ok": True}
 
+def _vocab_query(
+    db: Session,
+    user_id: int,
+    category: str | None = None,
+    keyword: str | None = None,
+):
+    """构造用户隔离的词汇查询，供列表、分页和复习队列共用。"""
+    query = db.query(VocabCard).filter(VocabCard.user_id == user_id)
+    normalized_category = (category or "").strip()
+    if normalized_category and normalized_category != "全部":
+        if normalized_category not in VOCAB_CATEGORIES:
+            raise HTTPException(status_code=422, detail="无效的词汇分类")
+        query = query.filter(VocabCard.category == normalized_category)
+    normalized_keyword = (keyword or "").strip()
+    if normalized_keyword:
+        pattern = f"%{normalized_keyword}%"
+        query = query.filter(
+            or_(
+                VocabCard.front.ilike(pattern),
+                VocabCard.back.ilike(pattern),
+                VocabCard.note.ilike(pattern),
+                VocabCard.category.ilike(pattern),
+            )
+        )
+    return query
+
+
 @app.get("/api/vocab", response_model=list[VocabOut])
-def list_vocab(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """列出当前用户的词汇卡片（按创建时间倒序）"""
+def list_vocab(
+    category: str | None = Query(None, max_length=20),
+    keyword: str | None = Query(None, max_length=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """列出当前用户的词汇卡片。保留全量响应，兼容拼写测试和按需加载复习队列。"""
     return (
-        db.query(VocabCard)
-        .filter(VocabCard.user_id == current_user.id)
-        .order_by(desc(VocabCard.created_at))
+        _vocab_query(db, current_user.id, category, keyword)
+        .order_by(desc(VocabCard.created_at), desc(VocabCard.id))
         .all()
     )
+
+
+@app.get("/api/vocab-page", response_model=VocabPageOut)
+def list_vocab_page(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    category: str | None = Query(None, max_length=20),
+    keyword: str | None = Query(None, max_length=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """分页返回词汇卡片，并用条件聚合一次计算页面统计。"""
+    query = _vocab_query(db, current_user.id, category, keyword)
+    now = _now_cst()
+    aggregate_columns = [
+        func.count(VocabCard.id).label("total"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (or_(VocabCard.next_review_at.is_(None), VocabCard.next_review_at <= now), 1),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("due"),
+        func.coalesce(func.sum(case((VocabCard.is_wrong.is_(True), 1), else_=0)), 0).label("wrong"),
+        func.coalesce(func.sum(case((VocabCard.box_level >= MAX_BOX_LEVEL, 1), else_=0)), 0).label("mastered"),
+    ]
+    aggregate_columns.extend(
+        func.coalesce(
+            func.sum(
+                case(
+                    ((VocabCard.box_level >= MAX_BOX_LEVEL if level == MAX_BOX_LEVEL else VocabCard.box_level == level), 1),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label(f"box_{level}")
+        for level in range(MAX_BOX_LEVEL + 1)
+    )
+    aggregate = query.with_entities(*aggregate_columns).one()._mapping
+    total = int(aggregate["total"] or 0)
+    pages = max(1, (total + page_size - 1) // page_size)
+    effective_page = min(page, pages)
+    items = (
+        query.order_by(desc(VocabCard.created_at), desc(VocabCard.id))
+        .offset((effective_page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    category_rows = (
+        db.query(VocabCard.category, func.count(VocabCard.id))
+        .filter(VocabCard.user_id == current_user.id)
+        .group_by(VocabCard.category)
+        .all()
+    )
+    category_counts = {name: 0 for name in VOCAB_CATEGORIES}
+    for name, count in category_rows:
+        category_counts[name] = int(count)
+
+    return {
+        "items": items,
+        "total": total,
+        "page": effective_page,
+        "page_size": page_size,
+        "pages": pages,
+        "stats": {
+            "total": total,
+            "due": int(aggregate["due"] or 0),
+            "wrong": int(aggregate["wrong"] or 0),
+            "mastered": int(aggregate["mastered"] or 0),
+            "category_counts": category_counts,
+            "box_counts": [int(aggregate[f"box_{level}"] or 0) for level in range(MAX_BOX_LEVEL + 1)],
+        },
+    }
 
 
 @app.post("/api/vocab", response_model=VocabOut, status_code=201)

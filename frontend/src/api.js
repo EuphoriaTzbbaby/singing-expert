@@ -180,9 +180,20 @@ export function adminListGroups() {
 
 // ==================== 词汇记忆 ====================
 
-// 列出当前用户的词汇卡片
-export function listVocab() {
-  return api.get('/vocab').then((r) => r.data)
+// 列出当前用户的词汇卡片（拼写测试/复习队列按需使用）
+export function listVocab({ category, keyword } = {}) {
+  const params = {}
+  if (category && category !== '全部') params.category = category
+  if (keyword?.trim()) params.keyword = keyword.trim()
+  return api.get('/vocab', { params }).then((r) => r.data)
+}
+
+// 词汇主页：服务端分页 + 统计，避免每次下载全量卡片
+export function listVocabPage({ page = 1, pageSize = 20, category, keyword } = {}) {
+  const params = { page, page_size: pageSize }
+  if (category && category !== '全部') params.category = category
+  if (keyword?.trim()) params.keyword = keyword.trim()
+  return api.get('/vocab-page', { params }).then((r) => r.data)
 }
 
 // 新增词汇卡片

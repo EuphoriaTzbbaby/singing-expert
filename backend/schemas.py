@@ -338,6 +338,28 @@ class VocabOut(BaseModel):
         return _serialize_cst(v)
 
 
+class VocabStatsOut(BaseModel):
+    """词汇页面统计。除 category_counts 外，其他数值都遵循当前分类/搜索条件。"""
+
+    total: int = 0
+    due: int = 0
+    wrong: int = 0
+    mastered: int = 0
+    category_counts: dict[str, int] = Field(default_factory=dict)
+    box_counts: list[int] = Field(default_factory=lambda: [0] * 7)
+
+
+class VocabPageOut(BaseModel):
+    """服务端分页的词汇列表，附带页面统计。"""
+
+    items: list[VocabOut]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    stats: VocabStatsOut
+
+
 class KnowledgeCardIn(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     tags: list[str] = Field(default_factory=list, max_length=20)
